@@ -1,42 +1,65 @@
-# Hex — Voice → Text
+# Hex Extended — Voice → Text + AI
 
-Press-and-hold a hotkey to transcribe your voice and paste the result wherever you're typing.
+A fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with Gemini AI integration, Whisper prompt profiles, and model fixes.
 
-**[Download Hex for macOS](https://hex-updates.s3.us-east-1.amazonaws.com/hex-latest.dmg)**
+> **Note:** Apple Silicon Macs only. Build from source (no pre-built binaries).
 
-> **Note:** Hex is currently only available for **Apple Silicon** Macs.
+## What's Different from Original Hex
 
-Or download via homebrew:
+### Gemini AI Processing
+- **Post-processing mode**: Whisper transcribes, then Gemini fixes technical terms, formatting, punctuation
+- **Direct audio mode**: Skip Whisper entirely, send audio straight to Gemini
+- Multiple named prompts (system instructions) with quick switching
+- Configurable thinking budget and model selection
+
+### Whisper Improvements
+- **Initial prompt profiles**: Named terminology hints for Whisper (e.g., "Kubernetes, Docker, EC2...")
+- **Model fixes for M1**: Both 626MB and full 1.5GB Whisper Large v3 work on M1 Max
+- **WhisperKit bug fix**: Patched empty results when using prompt tokens ([upstream #372](https://github.com/argmaxinc/WhisperKit/issues/372))
+
+### Other Changes
+- Auto-updates (Sparkle) removed — this fork is maintained independently
+- Error banner in Settings UI
+- Gemini processing time indicator
+
+## Build & Install
+
+Requires Xcode 16+ on Apple Silicon Mac.
+
 ```bash
-brew install --cask kitlangton-hex
+# Clone
+git clone git@github.com:asemenovwrk/hex_extended.git
+cd hex_extended
+
+# Build
+xcodebuild -scheme Hex -configuration Release -derivedDataPath build \
+  -skipMacroValidation \
+  CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM=""
+
+# Install
+APP="build/Build/Products/Release/Hex.app"
+cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+codesign --force --deep --sign - --entitlements Hex/Hex.entitlements "$APP"
+killall Hex 2>/dev/null
+rm -rf /Applications/Hex.app
+cp -R "$APP" /Applications/Hex.app
 ```
 
-I've opened-sourced the project in the hopes that others will find it useful! Hex supports both [Parakeet TDT v3](https://github.com/FluidInference/FluidAudio) via the awesome [FluidAudio](https://github.com/FluidInference/FluidAudio) (the default—it's frickin' unbelievable: fast, multilingual, and cloud-optimized) and the awesome [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device transcription. We use the incredible [Swift Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture) for structuring the app. Please open issues with any questions or feedback! ❤️
+## Setup
 
-## Instructions
+1. Open Hex, grant microphone and accessibility permissions
+2. Configure a global hotkey in Settings
+3. For Gemini AI features: get an API key at [aistudio.google.com](https://aistudio.google.com/apikey), enable "AI Processing" in Settings
 
-Once you open Hex, you'll need to grant it microphone and accessibility permissions—so it can record your voice and paste the transcribed text into any application, respectively.
+## Usage
 
-Once you've configured a global hotkey, there are **two recording modes**:
+1. **Press-and-hold** the hotkey to record, release to transcribe
+2. **Double-tap** the hotkey to lock recording, tap again to stop
 
-1. **Press-and-hold** the hotkey to begin recording, say whatever you want, and then release the hotkey to start the transcription process. 
-2. **Double-tap** the hotkey to *lock recording*, say whatever you want, and then **tap** the hotkey once more to start the transcription process.
+## Credits
 
-## Contributing
-
-**Issue reports are welcome!** If you encounter bugs or have feature requests, please [open an issue](https://github.com/kitlangton/Hex/issues).
-
-**Note on Pull Requests:** At this stage, I'm not actively reviewing code contributions for significant features or core logic changes. The project is evolving rapidly and it's easier for me to work directly from issue reports. Bug fixes and documentation improvements are still appreciated, but please open an issue first to discuss before investing time in a large PR. Thanks for understanding!
-
-### Changelog workflow
-
-- **For AI agents:** Run `bun run changeset:add-ai <type> "summary"` (e.g., `bun run changeset:add-ai patch "Fix clipboard timing"`) to create a changeset non-interactively.
-- **For humans:** Run `bunx changeset` when your PR needs release notes. Pick `patch`, `minor`, or `major` and write a short summary—this creates a `.changeset/*.md` fragment.
-- Check what will ship with `bunx changeset status --verbose`.
-- `npm run sync-changelog` (or `bun run tools/scripts/sync-changelog.ts`) mirrors the root `CHANGELOG.md` into `Hex/Resources/changelog.md` so the in-app sheet always matches GitHub releases.
-- The release tool consumes the pending fragments, bumps `package.json` + `Info.plist`, regenerates `CHANGELOG.md`, and feeds the resulting section to GitHub + Sparkle automatically. Releases fail fast if no changesets are queued, so you can't forget.
-- If you truly need to ship without pending Changesets (for example, re-running a failed publish), the release script will now prompt you to confirm and choose a `patch`/`minor`/`major` bump interactively before continuing.
+Based on [Hex](https://github.com/kitlangton/Hex) by Kit Langton. Uses [WhisperKit](https://github.com/argmaxinc/WhisperKit), [FluidAudio](https://github.com/FluidInference/FluidAudio), and [TCA](https://github.com/pointfreeco/swift-composable-architecture).
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+MIT License. See `LICENSE` for details.

@@ -1,6 +1,5 @@
 import ComposableArchitecture
 import Inject
-import Sparkle
 import AppKit
 import SwiftUI
 
@@ -14,8 +13,6 @@ struct HexApp: App {
   
     var body: some Scene {
         MenuBarExtra {
-            CheckForUpdatesView()
-
             // Copy last transcript to clipboard
             MenuBarCopyLastTranscriptButton()
 
@@ -42,8 +39,6 @@ struct HexApp: App {
 		WindowGroup {}.defaultLaunchBehavior(.suppressed)
 			.commands {
 				CommandGroup(after: .appInfo) {
-					CheckForUpdatesView()
-
 					Button("Settings...") {
 						appDelegate.presentSettingsView()
 					}.keyboardShortcut(",")

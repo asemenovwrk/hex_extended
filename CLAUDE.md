@@ -36,19 +36,36 @@ This is a fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with the f
 - Error banner at bottom of Settings window (red, dismissable)
 - Gemini processing time indicator in bottom bar
 
-### Build (This Fork)
+### Removed
+
+- **Sparkle auto-updates**: Disabled and removed from UI. This fork is maintained independently; the original Sparkle feed would overwrite our build with the upstream binary.
+
+### Build & Install (This Fork)
 
 ```bash
-# Build without developer certificate (ad-hoc signing)
+# 1. Build (ad-hoc signing, no developer certificate needed)
 xcodebuild -scheme Hex -configuration Release -derivedDataPath build \
   -skipMacroValidation \
   CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM=""
 
-# Sign with entitlements and install
-APP="build/Build/Products/Release/Hex.app"
-codesign --force --deep --sign - --entitlements Hex/Hex.entitlements "$APP"
-cp -R "$APP" /Applications/Hex.app
+# 2. Copy the app icon (Xcode 16 .icon format doesn't export via CLI)
+cp AppIcon.icns build/Build/Products/Release/Hex.app/Contents/Resources/AppIcon.icns
+
+# 3. Sign with sandbox entitlements (required for mic access, network, etc.)
+codesign --force --deep --sign - \
+  --entitlements Hex/Hex.entitlements \
+  build/Build/Products/Release/Hex.app
+
+# 4. Install (close Hex first)
+killall Hex 2>/dev/null
+rm -rf /Applications/Hex.app
+cp -R build/Build/Products/Release/Hex.app /Applications/Hex.app
 ```
+
+**Important notes:**
+- Step 2 is required because `AppIcon.icon` (Xcode 16 format) is not processed correctly by command-line builds. `AppIcon.icns` is extracted from the official release and committed to the repo root.
+- After first install, macOS may ask to grant microphone access again (ad-hoc signature changes the app identity for TCC).
+- The WhisperKit patch in `build/SourcePackages/checkouts/WhisperKit/Sources/WhisperKit/Core/TextDecoder.swift` lives in the SPM checkout and needs to be reapplied after `xcodebuild` resolves packages fresh (e.g., after deleting `build/`). The patch: change `sampleResult.completed` to `(!isPrefill && sampleResult.completed)` at ~line 858.
 
 ### Settings Fields Added to HexSettings
 
@@ -62,6 +79,7 @@ cp -R "$APP" /Applications/Hex.app
 | `geminiPrompts` | `[TranscriptionPrompt]` | `[]` | Gemini prompt profiles |
 | `selectedGeminiPromptID` | `UUID?` | `nil` | Active Gemini prompt |
 | `geminiDirectAudioMode` | `Bool` | `false` | Skip Whisper, send audio to Gemini |
+| `geminiThinkingBudget` | `Int` | `0` | Gemini thinking tokens (0=off) |
 
 ---
 
