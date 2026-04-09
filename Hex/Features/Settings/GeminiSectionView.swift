@@ -10,15 +10,21 @@ struct GeminiSectionView: View {
 	@Bindable var store: StoreOf<SettingsFeature>
 	@State private var isManagingPrompts = false
 
-	private let geminiModels: [(id: String, name: String)] = [
-		("gemini-2.5-flash", "Gemini 2.5 Flash"),
-		("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
-		("gemini-2.5-pro", "Gemini 2.5 Pro"),
-		("gemini-3-flash-preview", "Gemini 3 Flash (Preview)"),
-		("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite (Preview)"),
-		("gemma-4-26b-a4b-it", "Gemma 4 26B (Open, Free)"),
-		("gemma-4-31b-it", "Gemma 4 31B (Open, Free)"),
+	private let aiModels: [(id: String, name: String, provider: String)] = [
+		("gemini-2.5-flash", "Gemini 2.5 Flash", "google"),
+		("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", "google"),
+		("gemini-2.5-pro", "Gemini 2.5 Pro", "google"),
+		("gemini-3-flash-preview", "Gemini 3 Flash (Preview)", "google"),
+		("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite (Preview)", "google"),
+		("gemma-4-26b-a4b-it", "Gemma 4 26B (Open)", "google"),
+		("gemma-4-31b-it", "Gemma 4 31B (Open)", "google"),
+		("gpt-5.4-nano", "GPT-5.4 Nano", "openai"),
+		("gpt-5.4-mini", "GPT-5.4 Mini", "openai"),
 	]
+
+	private var selectedProvider: String {
+		aiModels.first(where: { $0.id == store.hexSettings.geminiModel })?.provider ?? "google"
+	}
 
 	var body: some View {
 		Section {
@@ -31,15 +37,6 @@ struct GeminiSectionView: View {
 			)
 
 			if store.hexSettings.geminiPostProcessingEnabled {
-				SecureField(
-					"Gemini API Key",
-					text: Binding(
-						get: { store.hexSettings.geminiApiKey ?? "" },
-						set: { store.send(.setGeminiApiKey($0.isEmpty ? nil : $0)) }
-					)
-				)
-				.textFieldStyle(.roundedBorder)
-
 				Picker(
 					"Model",
 					selection: Binding(
@@ -47,11 +44,26 @@ struct GeminiSectionView: View {
 						set: { store.send(.setGeminiModel($0)) }
 					)
 				) {
-					ForEach(geminiModels, id: \.id) { model in
-						Text(model.name).tag(model.id)
+					Text("Google").disabled(true)
+					ForEach(aiModels.filter { $0.provider == "google" }, id: \.id) { model in
+						Text("  " + model.name).tag(model.id)
+					}
+					Divider()
+					Text("OpenAI").disabled(true)
+					ForEach(aiModels.filter { $0.provider == "openai" }, id: \.id) { model in
+						Text("  " + model.name).tag(model.id)
 					}
 				}
 				.pickerStyle(.menu)
+
+				SecureField(
+					selectedProvider == "openai" ? "OpenAI API Key" : "Google API Key",
+					text: Binding(
+						get: { store.hexSettings.geminiApiKey ?? "" },
+						set: { store.send(.setGeminiApiKey($0.isEmpty ? nil : $0)) }
+					)
+				)
+				.textFieldStyle(.roundedBorder)
 
 				Toggle(
 					"Send audio directly to Gemini (skip Whisper)",

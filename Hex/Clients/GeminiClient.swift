@@ -2,24 +2,38 @@ import Dependencies
 import Foundation
 import HexCore
 
-private let geminiLogger = HexLog.transcription
+private let aiLogger = HexLog.transcription
 
 // MARK: - Result type
 
-struct GeminiResult: Sendable {
+struct AIResult: Sendable {
 	let text: String
 	let duration: TimeInterval
+}
+
+// MARK: - Provider detection
+
+enum AIProvider {
+	case gemini
+	case openai
+
+	static func from(model: String) -> AIProvider {
+		if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
+			return .openai
+		}
+		return .gemini
+	}
 }
 
 // MARK: - Client Interface
 
 struct GeminiClient: Sendable {
-	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> GeminiResult
-	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> GeminiResult
+	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> AIResult
+	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> AIResult
 
 	init(
-		postProcess: @escaping @Sendable (String, String, String, String, Int) async throws -> GeminiResult = { _, _, _, _, _ in GeminiResult(text: "", duration: 0) },
-		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int) async throws -> GeminiResult = { _, _, _, _, _ in GeminiResult(text: "", duration: 0) }
+		postProcess: @escaping @Sendable (String, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0) },
+		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0) }
 	) {
 		self.postProcess = postProcess
 		self.transcribeAudio = transcribeAudio
@@ -30,10 +44,10 @@ extension GeminiClient: DependencyKey {
 	static var liveValue: Self {
 		Self(
 			postProcess: { text, prompt, apiKey, model, thinkingBudget in
-				try await GeminiClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
+				try await AIClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
 			},
 			transcribeAudio: { audioURL, prompt, apiKey, model, thinkingBudget in
-				try await GeminiClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
+				try await AIClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
 			}
 		)
 	}
@@ -52,44 +66,72 @@ extension DependencyValues {
 
 // MARK: - Live Implementation
 
-private enum GeminiClientLive {
-	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> GeminiResult {
+private enum AIClientLive {
+	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
 		let start = Date()
-		let body: [String: Any] = [
-			"systemInstruction": [
-				"parts": [["text": prompt]]
-			],
-			"contents": [
-				["parts": [["text": text]]]
-			]
-		]
-		let resultText = try await sendRequest(body: body, apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget)
-		return GeminiResult(text: resultText, duration: Date().timeIntervalSince(start))
+		let provider = AIProvider.from(model: model)
+		let resultText: String
+
+		switch provider {
+		case .gemini:
+			resultText = try await geminiRequest(
+				systemPrompt: prompt,
+				userParts: [["text": text]],
+				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
+			)
+		case .openai:
+			resultText = try await openaiRequest(
+				systemPrompt: prompt,
+				userContent: text,
+				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
+			)
+		}
+
+		return AIResult(text: resultText, duration: Date().timeIntervalSince(start))
 	}
 
-	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> GeminiResult {
+	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
 		let start = Date()
-		let audioData = try Data(contentsOf: audioURL)
-		let base64Audio = audioData.base64EncodedString()
+		let provider = AIProvider.from(model: model)
+		let resultText: String
 
-		let body: [String: Any] = [
-			"systemInstruction": [
-				"parts": [["text": prompt]]
-			],
-			"contents": [
-				["parts": [
-					["inlineData": ["mimeType": "audio/wav", "data": base64Audio]],
-				]]
+		switch provider {
+		case .gemini:
+			let audioData = try Data(contentsOf: audioURL)
+			let base64Audio = audioData.base64EncodedString()
+			resultText = try await geminiRequest(
+				systemPrompt: prompt,
+				userParts: [["inlineData": ["mimeType": "audio/wav", "data": base64Audio]]],
+				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
+			)
+		case .openai:
+			// OpenAI audio transcription: use base64 audio in user message
+			let audioData = try Data(contentsOf: audioURL)
+			let base64Audio = audioData.base64EncodedString()
+			let userContent: [[String: Any]] = [
+				["type": "input_audio", "input_audio": ["data": base64Audio, "format": "wav"]]
 			]
-		]
-		let resultText = try await sendRequest(body: body, apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget)
-		return GeminiResult(text: resultText, duration: Date().timeIntervalSince(start))
+			resultText = try await openaiRequest(
+				systemPrompt: prompt,
+				userContentParts: userContent,
+				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
+			)
+		}
+
+		return AIResult(text: resultText, duration: Date().timeIntervalSince(start))
 	}
 
-	private static func sendRequest(body bodyInput: [String: Any], apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int) async throws -> String {
-		var body = bodyInput
-		body["generationConfig"] = [
-			"thinkingConfig": ["thinkingBudget": thinkingBudget]
+	// MARK: - Gemini API
+
+	private static func geminiRequest(
+		systemPrompt: String,
+		userParts: [[String: Any]],
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+	) async throws -> String {
+		var body: [String: Any] = [
+			"systemInstruction": ["parts": [["text": systemPrompt]]],
+			"contents": [["parts": userParts]],
+			"generationConfig": ["thinkingConfig": ["thinkingBudget": thinkingBudget]]
 		]
 		let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")!
 
@@ -101,16 +143,7 @@ private enum GeminiClientLive {
 		request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
 		let (data, response) = try await URLSession.shared.data(for: request)
-
-		guard let httpResponse = response as? HTTPURLResponse else {
-			throw GeminiError.invalidResponse
-		}
-
-		guard httpResponse.statusCode == 200 else {
-			let errorBody = String(data: data, encoding: .utf8) ?? "unknown"
-			geminiLogger.error("Gemini API error \(httpResponse.statusCode): \(errorBody)")
-			throw GeminiError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
-		}
+		try validateHTTPResponse(response, data: data)
 
 		guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
 			  let candidates = json["candidates"] as? [[String: Any]],
@@ -119,17 +152,95 @@ private enum GeminiClientLive {
 			  let parts = content["parts"] as? [[String: Any]],
 			  let firstPart = parts.first,
 			  let resultText = firstPart["text"] as? String
-		else {
-			throw GeminiError.parsingFailed
-		}
+		else { throw AIError.parsingFailed }
 
 		return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	// MARK: - OpenAI API
+
+	private static func openaiRequest(
+		systemPrompt: String,
+		userContent: String,
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+	) async throws -> String {
+		let userMessage: [String: Any] = ["role": "user", "content": userContent]
+		return try await openaiRequestInternal(
+			systemPrompt: systemPrompt, userMessage: userMessage,
+			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
+		)
+	}
+
+	private static func openaiRequest(
+		systemPrompt: String,
+		userContentParts: [[String: Any]],
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+	) async throws -> String {
+		let userMessage: [String: Any] = ["role": "user", "content": userContentParts]
+		return try await openaiRequestInternal(
+			systemPrompt: systemPrompt, userMessage: userMessage,
+			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
+		)
+	}
+
+	private static func openaiRequestInternal(
+		systemPrompt: String, userMessage: [String: Any],
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+	) async throws -> String {
+		let reasoningEffort: String = switch thinkingBudget {
+		case 0: "none"
+		case 1...1024: "low"
+		case 1025...4096: "medium"
+		default: "high"
+		}
+
+		let body: [String: Any] = [
+			"model": model,
+			"messages": [
+				["role": "system", "content": systemPrompt],
+				userMessage
+			],
+			"reasoning_effort": reasoningEffort
+		]
+		let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+
+		var request = URLRequest(url: url)
+		request.httpMethod = "POST"
+		request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+		request.timeoutInterval = timeout
+		request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+		let (data, response) = try await URLSession.shared.data(for: request)
+		try validateHTTPResponse(response, data: data)
+
+		guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+			  let choices = json["choices"] as? [[String: Any]],
+			  let firstChoice = choices.first,
+			  let message = firstChoice["message"] as? [String: Any],
+			  let resultText = message["content"] as? String
+		else { throw AIError.parsingFailed }
+
+		return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	// MARK: - Shared
+
+	private static func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
+		guard let httpResponse = response as? HTTPURLResponse else {
+			throw AIError.invalidResponse
+		}
+		guard httpResponse.statusCode == 200 else {
+			let errorBody = String(data: data, encoding: .utf8) ?? "unknown"
+			aiLogger.error("AI API error \(httpResponse.statusCode): \(errorBody)")
+			throw AIError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
+		}
 	}
 }
 
 // MARK: - Errors
 
-enum GeminiError: LocalizedError {
+enum AIError: LocalizedError {
 	case invalidResponse
 	case apiError(statusCode: Int, message: String)
 	case parsingFailed
@@ -137,11 +248,11 @@ enum GeminiError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .invalidResponse:
-			return "Invalid response from Gemini API"
+			return "Invalid response from AI API"
 		case let .apiError(statusCode, message):
-			return "Gemini API error (\(statusCode)): \(message)"
+			return "AI API error (\(statusCode)): \(message)"
 		case .parsingFailed:
-			return "Failed to parse Gemini API response"
+			return "Failed to parse AI API response"
 		}
 	}
 }
