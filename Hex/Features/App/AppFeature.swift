@@ -315,6 +315,46 @@ struct AppView: View {
           .navigationTitle("About")
       }
     }
+    .safeAreaInset(edge: .bottom) {
+      VStack(spacing: 4) {
+        if let error = store.transcription.error {
+          HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.red)
+            Text(error)
+              .font(.caption)
+              .lineLimit(3)
+            Spacer()
+            Button {
+              store.send(.transcription(.dismissError))
+            } label: {
+              Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+          }
+          .padding(10)
+          .background(.red.opacity(0.1))
+          .overlay(
+            RoundedRectangle(cornerRadius: 8)
+              .stroke(.red.opacity(0.3))
+          )
+          .cornerRadius(8)
+        }
+        if let timing = store.transcription.lastGeminiProcessingTime {
+          HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+              .font(.caption2)
+            Text("Gemini: \(String(format: "%.2fs", timing))")
+              .font(.caption)
+          }
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.bottom, 4)
+    }
     .enableInjection()
   }
 }

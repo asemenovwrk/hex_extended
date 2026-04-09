@@ -2,6 +2,69 @@
 
 This file provides guidance for coding agents working in this repo.
 
+## Fork Changes (Our Modifications)
+
+This is a fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with the following additions:
+
+### Bug Fixes
+
+- **WhisperKit model compatibility (M1)**: Original `models.json` referenced `openai_whisper-large-v3-v20240930` (1.5GB) which was not in WhisperKit's supported list for M1 chips. Added `openai_whisper-large-v3-v20240930_626MB` as a curated option. Also patched `ModelDownloadFeature.swift` to check curated models via filesystem directly, bypassing WhisperKit's device filter — this allows the full 1.5GB model to work on M1 Max (32GB).
+- **WhisperKit promptTokens fix**: Patched `TextDecoder.swift` in WhisperKit (local checkout) to guard `sampleResult.completed` with `!isPrefill` — fixes [WhisperKit #372](https://github.com/argmaxinc/WhisperKit/issues/372) where prompt tokens caused empty transcription results.
+
+### New Features
+
+#### Whisper Initial Prompts (`TranscriptionPrompt`)
+- Named prompts with terminology hints for Whisper's `initialPrompt` feature
+- Multiple prompts with quick switching via picker in Settings
+- Passed as `promptTokens` to WhisperKit's `DecodingOptions`
+- Files: `TranscriptionPrompt.swift`, `TranscriptionPromptSectionView.swift`, `TranscriptionPromptsManagementView.swift`
+
+#### Gemini AI Post-Processing (`GeminiClient`)
+- Optional post-processing of transcribed text through Google Gemini API
+- Two modes:
+  - **Whisper + Gemini**: Whisper transcribes, Gemini post-processes text
+  - **Gemini Direct Audio**: Audio sent directly to Gemini, skipping Whisper entirely
+- Multiple named prompts (system instructions) with quick switching
+- Model selection: Gemini 2.5 Flash/Lite/Pro, Gemini 3 Flash, Gemini 3.1 Flash Lite
+- Thinking disabled (`thinkingBudget: 0`) for minimal latency
+- 1 automatic retry on failure, then error shown in UI
+- Processing time displayed in bottom bar
+- Progress indicator stays active during Gemini processing
+- Files: `GeminiClient.swift`, `GeminiSectionView.swift`
+
+#### UI Improvements
+- Error banner at bottom of Settings window (red, dismissable)
+- Gemini processing time indicator in bottom bar
+
+### Build (This Fork)
+
+```bash
+# Build without developer certificate (ad-hoc signing)
+xcodebuild -scheme Hex -configuration Release -derivedDataPath build \
+  -skipMacroValidation \
+  CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM=""
+
+# Sign with entitlements and install
+APP="build/Build/Products/Release/Hex.app"
+codesign --force --deep --sign - --entitlements Hex/Hex.entitlements "$APP"
+cp -R "$APP" /Applications/Hex.app
+```
+
+### Settings Fields Added to HexSettings
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `transcriptionPrompts` | `[TranscriptionPrompt]` | `[]` | Whisper initial prompt profiles |
+| `selectedTranscriptionPromptID` | `UUID?` | `nil` | Active Whisper prompt |
+| `geminiApiKey` | `String?` | `nil` | Gemini API key |
+| `geminiModel` | `String` | `"gemini-2.5-flash"` | Selected Gemini model |
+| `geminiPostProcessingEnabled` | `Bool` | `false` | Master toggle |
+| `geminiPrompts` | `[TranscriptionPrompt]` | `[]` | Gemini prompt profiles |
+| `selectedGeminiPromptID` | `UUID?` | `nil` | Active Gemini prompt |
+| `geminiDirectAudioMode` | `Bool` | `false` | Skip Whisper, send audio to Gemini |
+
+---
+
 ## Project Overview
 
 Hex is a macOS menu bar application for on‑device voice‑to‑text. It supports Whisper (Core ML via WhisperKit) and Parakeet TDT v3 (Core ML via FluidAudio). Users activate transcription with hotkeys; text can be auto‑pasted into the active app.

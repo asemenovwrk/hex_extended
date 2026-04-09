@@ -23,6 +23,7 @@ struct TranscriptionFeature {
     var isTranscribing: Bool = false
     var isPrewarming: Bool = false
     var error: String?
+    var lastGeminiProcessingTime: TimeInterval?
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var sourceAppBundleID: String?
@@ -55,6 +56,13 @@ struct TranscriptionFeature {
 
     // Model availability
     case modelMissing
+
+    // Error dismissal
+    case dismissError
+
+    // Gemini
+    case geminiTimingUpdated(TimeInterval)
+    case geminiPostProcessingCompleted
   }
 
   enum CancelID {
@@ -66,6 +74,7 @@ struct TranscriptionFeature {
   @Dependency(\.transcription) var transcription
   @Dependency(\.recording) var recording
   @Dependency(\.pasteboard) var pasteboard
+  @Dependency(\.gemini) var gemini
   @Dependency(\.keyEventMonitor) var keyEventMonitor
   @Dependency(\.soundEffects) var soundEffect
   @Dependency(\.sleepManagement) var sleepManagement
@@ -123,6 +132,18 @@ struct TranscriptionFeature {
         return handleTranscriptionError(&state, error: error, audioURL: audioURL)
 
       case .modelMissing:
+        return .none
+
+      case .dismissError:
+        state.error = nil
+        return .none
+
+      case let .geminiTimingUpdated(duration):
+        state.lastGeminiProcessingTime = duration
+        return .none
+
+      case .geminiPostProcessingCompleted:
+        state.isTranscribing = false
         return .none
 
       // MARK: - Cancel/Discard Flow
@@ -352,10 +373,19 @@ private extension TranscriptionFeature {
     state.error = nil
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
+    let promptText = state.hexSettings.selectedTranscriptionPrompt?.text
+
+    // Gemini settings
+    let geminiEnabled = state.hexSettings.geminiPostProcessingEnabled
+    let geminiApiKey = state.hexSettings.geminiApiKey
+    let geminiPromptText = state.hexSettings.selectedGeminiPrompt?.text
+    let geminiModel = state.hexSettings.geminiModel
+    let geminiDirectAudio = state.hexSettings.geminiDirectAudioMode
+    let geminiThinkingBudget = state.hexSettings.geminiThinkingBudget
 
     state.isPrewarming = true
 
-    return .run { [sleepManagement] send in
+    return .run { [sleepManagement, gemini] send in
       // Allow system to sleep again
       await sleepManagement.allowSleep()
 
@@ -366,16 +396,27 @@ private extension TranscriptionFeature {
         soundEffect.play(.stopRecording)
         audioURL = capturedURL
 
-        // Create transcription options with the selected language
-        // Note: cap concurrency to avoid audio I/O overloads on some Macs
+        // Gemini Direct Audio mode: skip Whisper entirely
+        if geminiDirectAudio,
+           geminiEnabled,
+           let apiKey = geminiApiKey, !apiKey.isEmpty,
+           let prompt = geminiPromptText, !prompt.isEmpty {
+          let result = try await gemini.transcribeAudio(capturedURL, prompt, apiKey, geminiModel, geminiThinkingBudget)
+          await send(.geminiTimingUpdated(result.duration))
+          transcriptionFeatureLogger.notice("Gemini direct audio transcription: \(result.text.count) chars in \(String(format: "%.2f", result.duration))s")
+          await send(.transcriptionResult(result.text, capturedURL))
+          return
+        }
+
+        // Standard Whisper transcription
         let decodeOptions = DecodingOptions(
           language: language,
-          detectLanguage: language == nil, // Only auto-detect if no language specified
+          detectLanguage: language == nil,
           chunkingStrategy: .vad,
         )
-        
-        let result = try await transcription.transcribe(capturedURL, model, decodeOptions) { _ in }
-        
+
+        let result = try await transcription.transcribe(capturedURL, model, decodeOptions, promptText) { _ in }
+
         transcriptionFeatureLogger.notice("Transcribed audio from \(capturedURL.lastPathComponent) to text length \(result.count)")
         await send(.transcriptionResult(result, capturedURL))
       } catch {
@@ -395,8 +436,16 @@ private extension TranscriptionFeature {
     result: String,
     audioURL: URL
   ) -> Effect<Action> {
-    state.isTranscribing = false
     state.isPrewarming = false
+
+    // Keep isTranscribing=true if Gemini post-processing will run
+    let willRunGemini = state.hexSettings.geminiPostProcessingEnabled
+      && !state.hexSettings.geminiDirectAudioMode
+      && state.hexSettings.geminiApiKey != nil
+      && state.hexSettings.selectedGeminiPrompt?.text != nil
+    if !willRunGemini {
+      state.isTranscribing = false
+    }
 
     // Check for force quit command (emergency escape hatch)
     if ForceQuitCommandDetector.matches(result) {
@@ -448,11 +497,39 @@ private extension TranscriptionFeature {
     let sourceAppBundleID = state.sourceAppBundleID
     let sourceAppName = state.sourceAppName
     let transcriptionHistory = state.$transcriptionHistory
+    let geminiEnabled = state.hexSettings.geminiPostProcessingEnabled
+    let geminiDirectAudio = state.hexSettings.geminiDirectAudioMode
+    let geminiApiKey = state.hexSettings.geminiApiKey
+    let geminiPromptText = state.hexSettings.selectedGeminiPrompt?.text
+    let geminiModel = state.hexSettings.geminiModel
+    let geminiThinkingBudget = state.hexSettings.geminiThinkingBudget
 
-    return .run { send in
+    return .run { [gemini] send in
+      var finalResult = modifiedResult
+
+      // Gemini text post-processing (skip if direct audio mode — already processed)
+      if geminiEnabled, !geminiDirectAudio,
+         let apiKey = geminiApiKey, !apiKey.isEmpty,
+         let prompt = geminiPromptText, !prompt.isEmpty {
+        do {
+          let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
+          finalResult = result.text
+          await send(.geminiTimingUpdated(result.duration))
+          transcriptionFeatureLogger.info("Gemini post-processing applied in \(String(format: "%.2f", result.duration))s")
+        } catch {
+          transcriptionFeatureLogger.error("Gemini post-processing failed, retrying: \(error.localizedDescription)")
+          // Retry once
+          let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
+          finalResult = result.text
+          await send(.geminiTimingUpdated(result.duration))
+          transcriptionFeatureLogger.info("Gemini post-processing applied on retry in \(String(format: "%.2f", result.duration))s")
+        }
+        await send(.geminiPostProcessingCompleted)
+      }
+
       do {
         try await finalizeRecordingAndStoreTranscript(
-          result: modifiedResult,
+          result: finalResult,
           duration: duration,
           sourceAppBundleID: sourceAppBundleID,
           sourceAppName: sourceAppName,

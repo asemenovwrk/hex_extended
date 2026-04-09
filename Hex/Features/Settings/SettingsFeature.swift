@@ -113,6 +113,23 @@ struct SettingsFeature {
     case updateWordRemapping(WordRemapping)
     case removeWordRemapping(UUID)
     case setRemappingScratchpadFocused(Bool)
+
+    // Transcription prompts
+    case setSelectedTranscriptionPromptID(UUID?)
+    case addTranscriptionPrompt
+    case updateTranscriptionPrompt(TranscriptionPrompt)
+    case removeTranscriptionPrompt(UUID)
+
+    // Gemini post-processing
+    case setGeminiApiKey(String?)
+    case setGeminiModel(String)
+    case setGeminiPostProcessingEnabled(Bool)
+    case setGeminiDirectAudioMode(Bool)
+    case setSelectedGeminiPromptID(UUID?)
+    case addGeminiPrompt
+    case updateGeminiPrompt(TranscriptionPrompt)
+    case removeGeminiPrompt(UUID)
+    case setGeminiThinkingBudget(Int)
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -582,6 +599,84 @@ struct SettingsFeature {
 
       case let .setWordRemovalsEnabled(enabled):
         state.$hexSettings.withLock { $0.wordRemovalsEnabled = enabled }
+        return .none
+
+      // Transcription prompts
+      case let .setSelectedTranscriptionPromptID(id):
+        state.$hexSettings.withLock { $0.selectedTranscriptionPromptID = id }
+        return .none
+
+      case .addTranscriptionPrompt:
+        let newPrompt = TranscriptionPrompt(name: "", text: "")
+        state.$hexSettings.withLock {
+          $0.transcriptionPrompts.append(newPrompt)
+          $0.selectedTranscriptionPromptID = newPrompt.id
+        }
+        return .none
+
+      case let .updateTranscriptionPrompt(prompt):
+        state.$hexSettings.withLock {
+          guard let index = $0.transcriptionPrompts.firstIndex(where: { $0.id == prompt.id }) else { return }
+          $0.transcriptionPrompts[index] = prompt
+        }
+        return .none
+
+      case let .removeTranscriptionPrompt(id):
+        state.$hexSettings.withLock {
+          $0.transcriptionPrompts.removeAll { $0.id == id }
+          if $0.selectedTranscriptionPromptID == id {
+            $0.selectedTranscriptionPromptID = nil
+          }
+        }
+        return .none
+
+      // Gemini post-processing
+      case let .setGeminiApiKey(key):
+        state.$hexSettings.withLock { $0.geminiApiKey = key }
+        return .none
+
+      case let .setGeminiModel(model):
+        state.$hexSettings.withLock { $0.geminiModel = model }
+        return .none
+
+      case let .setGeminiPostProcessingEnabled(enabled):
+        state.$hexSettings.withLock { $0.geminiPostProcessingEnabled = enabled }
+        return .none
+
+      case let .setGeminiDirectAudioMode(enabled):
+        state.$hexSettings.withLock { $0.geminiDirectAudioMode = enabled }
+        return .none
+
+      case let .setSelectedGeminiPromptID(id):
+        state.$hexSettings.withLock { $0.selectedGeminiPromptID = id }
+        return .none
+
+      case .addGeminiPrompt:
+        let newPrompt = TranscriptionPrompt(name: "", text: "")
+        state.$hexSettings.withLock {
+          $0.geminiPrompts.append(newPrompt)
+          $0.selectedGeminiPromptID = newPrompt.id
+        }
+        return .none
+
+      case let .updateGeminiPrompt(prompt):
+        state.$hexSettings.withLock {
+          guard let index = $0.geminiPrompts.firstIndex(where: { $0.id == prompt.id }) else { return }
+          $0.geminiPrompts[index] = prompt
+        }
+        return .none
+
+      case let .removeGeminiPrompt(id):
+        state.$hexSettings.withLock {
+          $0.geminiPrompts.removeAll { $0.id == id }
+          if $0.selectedGeminiPromptID == id {
+            $0.selectedGeminiPromptID = nil
+          }
+        }
+        return .none
+
+      case let .setGeminiThinkingBudget(budget):
+        state.$hexSettings.withLock { $0.geminiThinkingBudget = budget }
         return .none
 
       }

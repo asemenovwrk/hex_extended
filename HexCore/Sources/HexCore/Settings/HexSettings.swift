@@ -47,6 +47,25 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var wordRemovalsEnabled: Bool
 	public var wordRemovals: [WordRemoval]
 	public var wordRemappings: [WordRemapping]
+	public var transcriptionPrompts: [TranscriptionPrompt]
+	public var selectedTranscriptionPromptID: UUID?
+	public var geminiApiKey: String?
+	public var geminiModel: String
+	public var geminiPostProcessingEnabled: Bool
+	public var geminiPrompts: [TranscriptionPrompt]
+	public var selectedGeminiPromptID: UUID?
+	public var geminiDirectAudioMode: Bool
+	public var geminiThinkingBudget: Int
+
+	public var selectedTranscriptionPrompt: TranscriptionPrompt? {
+		guard let id = selectedTranscriptionPromptID else { return nil }
+		return transcriptionPrompts.first { $0.id == id }
+	}
+
+	public var selectedGeminiPrompt: TranscriptionPrompt? {
+		guard let id = selectedGeminiPromptID else { return nil }
+		return geminiPrompts.first { $0.id == id }
+	}
 
 	private mutating func normalizeDoubleTapSettings() {
 		if !doubleTapLockEnabled {
@@ -78,7 +97,16 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		hasCompletedStorageMigration: Bool = false,
 		wordRemovalsEnabled: Bool = false,
 		wordRemovals: [WordRemoval] = HexSettings.defaultWordRemovals,
-		wordRemappings: [WordRemapping] = []
+		wordRemappings: [WordRemapping] = [],
+		transcriptionPrompts: [TranscriptionPrompt] = [],
+		selectedTranscriptionPromptID: UUID? = nil,
+		geminiApiKey: String? = nil,
+		geminiModel: String = "gemini-2.5-flash",
+		geminiPostProcessingEnabled: Bool = false,
+		geminiPrompts: [TranscriptionPrompt] = [],
+		selectedGeminiPromptID: UUID? = nil,
+		geminiDirectAudioMode: Bool = false,
+		geminiThinkingBudget: Int = 0
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.soundEffectsVolume = soundEffectsVolume
@@ -104,6 +132,15 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.wordRemovalsEnabled = wordRemovalsEnabled
 		self.wordRemovals = wordRemovals
 		self.wordRemappings = wordRemappings
+		self.transcriptionPrompts = transcriptionPrompts
+		self.selectedTranscriptionPromptID = selectedTranscriptionPromptID
+		self.geminiApiKey = geminiApiKey
+		self.geminiModel = geminiModel
+		self.geminiPostProcessingEnabled = geminiPostProcessingEnabled
+		self.geminiPrompts = geminiPrompts
+		self.selectedGeminiPromptID = selectedGeminiPromptID
+		self.geminiDirectAudioMode = geminiDirectAudioMode
+		self.geminiThinkingBudget = geminiThinkingBudget
 		normalizeDoubleTapSettings()
 	}
 
@@ -152,6 +189,15 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case wordRemovalsEnabled
 	case wordRemovals
 	case wordRemappings
+	case transcriptionPrompts
+	case selectedTranscriptionPromptID
+	case geminiApiKey
+	case geminiModel
+	case geminiPostProcessingEnabled
+	case geminiPrompts
+	case selectedGeminiPromptID
+	case geminiDirectAudioMode
+	case geminiThinkingBudget
 }
 
 private struct SettingsField<Value: Codable & Sendable> {
@@ -284,6 +330,40 @@ private enum HexSettingsSchema {
 			.wordRemappings,
 			keyPath: \.wordRemappings,
 			default: defaults.wordRemappings
-		).eraseToAny()
+		).eraseToAny(),
+		SettingsField(
+			.transcriptionPrompts,
+			keyPath: \.transcriptionPrompts,
+			default: defaults.transcriptionPrompts
+		).eraseToAny(),
+		SettingsField(
+			.selectedTranscriptionPromptID,
+			keyPath: \.selectedTranscriptionPromptID,
+			default: defaults.selectedTranscriptionPromptID,
+			encode: { container, key, value in
+				try container.encodeIfPresent(value, forKey: key)
+			}
+		).eraseToAny(),
+		SettingsField(
+			.geminiApiKey,
+			keyPath: \.geminiApiKey,
+			default: defaults.geminiApiKey,
+			encode: { container, key, value in
+				try container.encodeIfPresent(value, forKey: key)
+			}
+		).eraseToAny(),
+		SettingsField(.geminiModel, keyPath: \.geminiModel, default: defaults.geminiModel).eraseToAny(),
+		SettingsField(.geminiPostProcessingEnabled, keyPath: \.geminiPostProcessingEnabled, default: defaults.geminiPostProcessingEnabled).eraseToAny(),
+		SettingsField(.geminiPrompts, keyPath: \.geminiPrompts, default: defaults.geminiPrompts).eraseToAny(),
+		SettingsField(
+			.selectedGeminiPromptID,
+			keyPath: \.selectedGeminiPromptID,
+			default: defaults.selectedGeminiPromptID,
+			encode: { container, key, value in
+				try container.encodeIfPresent(value, forKey: key)
+			}
+		).eraseToAny(),
+		SettingsField(.geminiDirectAudioMode, keyPath: \.geminiDirectAudioMode, default: defaults.geminiDirectAudioMode).eraseToAny(),
+		SettingsField(.geminiThinkingBudget, keyPath: \.geminiThinkingBudget, default: defaults.geminiThinkingBudget).eraseToAny()
 	]
 }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "f44bfcb7633bb4f97f421fc010835f104416ee5f9ddbd6fb9f265665f4fc1c4d",
+  "originHash" : "c3748bd21cf76e341b014b88d83a0bc28cd9075e0e1c24e93cd6e3ea9af35fec",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -35,6 +35,15 @@
       "state" : {
         "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
         "version" : "6.0.1"
+      }
+    },
+    {
+      "identity" : "opencombine",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OpenCombine/OpenCombine.git",
+      "state" : {
+        "revision" : "8576f0d579b27020beccbccc3ea6844f3ddfc2c2",
+        "version" : "0.14.0"
       }
     },
     {

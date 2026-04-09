@@ -23,10 +23,14 @@ struct SettingsView: View {
 				)
 			}
 
-			ModelSectionView(store: store, shouldFlash: store.shouldFlashModelSection)
-			// Only show language picker for WhisperKit models (not Parakeet)
-			if ParakeetModel(rawValue: store.hexSettings.selectedModel) == nil {
-				LanguageSectionView(store: store)
+			let geminiDirectAudio = store.hexSettings.geminiPostProcessingEnabled && store.hexSettings.geminiDirectAudioMode
+			if !geminiDirectAudio {
+				ModelSectionView(store: store, shouldFlash: store.shouldFlashModelSection)
+				// Only show language picker and prompt selector for WhisperKit models (not Parakeet)
+				if ParakeetModel(rawValue: store.hexSettings.selectedModel) == nil {
+					LanguageSectionView(store: store)
+					TranscriptionPromptSectionView(store: store)
+				}
 			}
 
 			HotKeySectionView(store: store)
@@ -38,6 +42,7 @@ struct SettingsView: View {
 			SoundSectionView(store: store)
 			GeneralSectionView(store: store)
 			HistorySectionView(store: store)
+			GeminiSectionView(store: store)
 		}
 		.formStyle(.grouped)
 		.task {

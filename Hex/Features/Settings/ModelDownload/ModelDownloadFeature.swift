@@ -240,8 +240,12 @@ public struct ModelDownloadFeature {
 					let recommendedSupport = try await recommendedSupportTask
 					let names = try await availableNamesTask
 					let recommended = recommendedSupport.default
+					// Also check curated models that may not appear in the
+					// device-filtered available list (e.g. turbo on M1).
+					let curatedNames = CuratedModelLoader.load().map(\.internalName)
+					let allNames = Array(Set(names + curatedNames))
 					let infos = try await withThrowingTaskGroup(of: ModelInfo.self) { group -> [ModelInfo] in
-						for name in names {
+						for name in allNames {
 							group.addTask {
 								ModelInfo(
 									name: name,

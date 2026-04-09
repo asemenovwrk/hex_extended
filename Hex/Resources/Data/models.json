@@ -33,10 +33,18 @@
   },
   {
     "displayName": "Whisper Large v3",
-    "internalName": "openai_whisper-large-v3-v20240930",
+    "internalName": "openai_whisper-large-v3-v20240930_626MB",
     "size": "Multilingual",
     "accuracyStars": 4,
     "speedStars": 2,
+    "storageSize": "626MB"
+  },
+  {
+    "displayName": "Whisper Large v3 (Full)",
+    "internalName": "openai_whisper-large-v3-v20240930",
+    "size": "Multilingual",
+    "accuracyStars": 5,
+    "speedStars": 1,
     "storageSize": "1.5GB"
   }
 ]
