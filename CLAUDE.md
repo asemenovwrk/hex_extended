@@ -19,22 +19,27 @@ This is a fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with the f
 - Passed as `promptTokens` to WhisperKit's `DecodingOptions`
 - Files: `TranscriptionPrompt.swift`, `TranscriptionPromptSectionView.swift`, `TranscriptionPromptsManagementView.swift`
 
-#### Gemini AI Post-Processing (`GeminiClient`)
-- Optional post-processing of transcribed text through Google Gemini API
+#### AI Post-Processing (`GeminiClient`)
+- Optional post-processing of transcribed text through Google Gemini or OpenAI API
+- Two providers auto-detected by model ID:
+  - **Google**: Gemini 2.5 Flash/Lite/Pro, Gemini 3 Flash, Gemini 3.1 Flash Lite, Gemma 4 26B/31B
+  - **OpenAI**: GPT-5.4 Nano, GPT-5.4 Mini (text post-processing only, no audio)
 - Two modes:
-  - **Whisper + Gemini**: Whisper transcribes, Gemini post-processes text
-  - **Gemini Direct Audio**: Audio sent directly to Gemini, skipping Whisper entirely
+  - **Whisper + AI**: Whisper transcribes, AI post-processes text
+  - **Direct Audio** (Google models only): Audio sent directly to Gemini, skipping Whisper entirely
+- Separate API keys for Google and OpenAI (`activeAIApiKey` computed helper selects by model)
 - Multiple named prompts (system instructions) with quick switching
-- Model selection: Gemini 2.5 Flash/Lite/Pro, Gemini 3 Flash, Gemini 3.1 Flash Lite
-- Thinking disabled (`thinkingBudget: 0`) for minimal latency
+- Configurable thinking budget (Off/Low/Medium/High) — maps to Gemini `thinkingBudget` or OpenAI `reasoning_effort`
 - 1 automatic retry on failure, then error shown in UI
-- Processing time displayed in bottom bar
-- Progress indicator stays active during Gemini processing
+- Token usage stats (input+output) displayed alongside processing time
+- Green progress indicator during AI post-processing (distinct from blue Whisper indicator)
+- ESC cancels both transcription and post-processing
 - Files: `GeminiClient.swift`, `GeminiSectionView.swift`
 
 #### UI Improvements
 - Error banner at bottom of Settings window (red, dismissable)
-- Gemini processing time indicator in bottom bar
+- AI processing stats in bottom bar: model name, duration, token count
+- Green capsule indicator for post-processing phase
 
 ### Removed
 
@@ -73,13 +78,14 @@ cp -R build/Build/Products/Release/Hex.app /Applications/Hex.app
 |-------|------|---------|---------|
 | `transcriptionPrompts` | `[TranscriptionPrompt]` | `[]` | Whisper initial prompt profiles |
 | `selectedTranscriptionPromptID` | `UUID?` | `nil` | Active Whisper prompt |
-| `geminiApiKey` | `String?` | `nil` | Gemini API key |
-| `geminiModel` | `String` | `"gemini-2.5-flash"` | Selected Gemini model |
+| `geminiApiKey` | `String?` | `nil` | Google API key (Gemini/Gemma) |
+| `openaiApiKey` | `String?` | `nil` | OpenAI API key (GPT models) |
+| `geminiModel` | `String` | `"gemini-2.5-flash"` | Selected AI model (any provider) |
 | `geminiPostProcessingEnabled` | `Bool` | `false` | Master toggle |
-| `geminiPrompts` | `[TranscriptionPrompt]` | `[]` | Gemini prompt profiles |
-| `selectedGeminiPromptID` | `UUID?` | `nil` | Active Gemini prompt |
-| `geminiDirectAudioMode` | `Bool` | `false` | Skip Whisper, send audio to Gemini |
-| `geminiThinkingBudget` | `Int` | `0` | Gemini thinking tokens (0=off) |
+| `geminiPrompts` | `[TranscriptionPrompt]` | `[]` | AI prompt profiles |
+| `selectedGeminiPromptID` | `UUID?` | `nil` | Active AI prompt |
+| `geminiDirectAudioMode` | `Bool` | `false` | Skip Whisper, send audio to AI (Google only) |
+| `geminiThinkingBudget` | `Int` | `0` | Thinking budget (0=off, maps to reasoning_effort for OpenAI) |
 
 ---
 
