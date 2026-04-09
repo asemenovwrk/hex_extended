@@ -16,6 +16,8 @@ struct GeminiSectionView: View {
 		("gemini-2.5-pro", "Gemini 2.5 Pro"),
 		("gemini-3-flash-preview", "Gemini 3 Flash (Preview)"),
 		("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite (Preview)"),
+		("gemma-4-26b-a4b-it", "Gemma 4 26B (Open, Free)"),
+		("gemma-4-31b-it", "Gemma 4 31B (Open, Free)"),
 	]
 
 	var body: some View {
