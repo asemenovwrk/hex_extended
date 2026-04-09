@@ -57,7 +57,7 @@ struct GeminiSectionView: View {
 				.pickerStyle(.menu)
 
 				SecureField(
-					selectedProvider == "openai" ? "OpenAI API Key" : "Google API Key",
+					"Google API Key",
 					text: Binding(
 						get: { store.hexSettings.geminiApiKey ?? "" },
 						set: { store.send(.setGeminiApiKey($0.isEmpty ? nil : $0)) }
@@ -65,13 +65,25 @@ struct GeminiSectionView: View {
 				)
 				.textFieldStyle(.roundedBorder)
 
-				Toggle(
-					"Send audio directly to Gemini (skip Whisper)",
-					isOn: Binding(
-						get: { store.hexSettings.geminiDirectAudioMode },
-						set: { store.send(.setGeminiDirectAudioMode($0)) }
+				SecureField(
+					"OpenAI API Key",
+					text: Binding(
+						get: { store.hexSettings.openaiApiKey ?? "" },
+						set: { store.send(.setOpenAIApiKey($0.isEmpty ? nil : $0)) }
 					)
 				)
+				.textFieldStyle(.roundedBorder)
+
+				// Direct audio only supported by Google models (not OpenAI)
+				if selectedProvider == "google" {
+					Toggle(
+						"Send audio directly (skip Whisper)",
+						isOn: Binding(
+							get: { store.hexSettings.geminiDirectAudioMode },
+							set: { store.send(.setGeminiDirectAudioMode($0)) }
+						)
+					)
+				}
 
 				// Prompt picker
 				HStack {
@@ -117,7 +129,7 @@ struct GeminiSectionView: View {
 				.pickerStyle(.menu)
 			}
 		} header: {
-			Label("AI Processing (Gemini)", systemImage: "sparkles")
+			Label("AI Processing", systemImage: "sparkles")
 		}
 		.sheet(isPresented: $isManagingPrompts) {
 			GeminiPromptsManagementView(store: store)
@@ -134,9 +146,9 @@ private struct GeminiPromptsManagementView: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 16) {
-			Text("Gemini Prompts")
+			Text("AI Processing Prompts")
 				.font(.title2.bold())
-			Text("Define instructions for Gemini. E.g.: \"Fix technical terms and punctuation\" or \"Transliterate Russian to Latin\".")
+			Text("Define instructions for the AI model. E.g.: \"Fix technical terms and punctuation\" or \"Transliterate Russian to Latin\".")
 				.font(.callout)
 				.foregroundStyle(.secondary)
 
@@ -212,7 +224,7 @@ private struct GeminiPromptRow: View {
 			}
 			TextEditor(text: $prompt.text)
 				.font(.body.monospaced())
-				.frame(minHeight: 60, idealHeight: 80)
+				.frame(minHeight: 120, idealHeight: 160)
 				.scrollContentBackground(.hidden)
 				.padding(6)
 				.background(

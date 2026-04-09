@@ -50,6 +50,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var transcriptionPrompts: [TranscriptionPrompt]
 	public var selectedTranscriptionPromptID: UUID?
 	public var geminiApiKey: String?
+	public var openaiApiKey: String?
 	public var geminiModel: String
 	public var geminiPostProcessingEnabled: Bool
 	public var geminiPrompts: [TranscriptionPrompt]
@@ -60,6 +61,14 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var selectedTranscriptionPrompt: TranscriptionPrompt? {
 		guard let id = selectedTranscriptionPromptID else { return nil }
 		return transcriptionPrompts.first { $0.id == id }
+	}
+
+	public var activeAIApiKey: String? {
+		let model = geminiModel
+		if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
+			return openaiApiKey
+		}
+		return geminiApiKey
 	}
 
 	public var selectedGeminiPrompt: TranscriptionPrompt? {
@@ -101,6 +110,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		transcriptionPrompts: [TranscriptionPrompt] = [],
 		selectedTranscriptionPromptID: UUID? = nil,
 		geminiApiKey: String? = nil,
+		openaiApiKey: String? = nil,
 		geminiModel: String = "gemini-2.5-flash",
 		geminiPostProcessingEnabled: Bool = false,
 		geminiPrompts: [TranscriptionPrompt] = [],
@@ -135,6 +145,7 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.transcriptionPrompts = transcriptionPrompts
 		self.selectedTranscriptionPromptID = selectedTranscriptionPromptID
 		self.geminiApiKey = geminiApiKey
+		self.openaiApiKey = openaiApiKey
 		self.geminiModel = geminiModel
 		self.geminiPostProcessingEnabled = geminiPostProcessingEnabled
 		self.geminiPrompts = geminiPrompts
@@ -192,6 +203,7 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case transcriptionPrompts
 	case selectedTranscriptionPromptID
 	case geminiApiKey
+	case openaiApiKey
 	case geminiModel
 	case geminiPostProcessingEnabled
 	case geminiPrompts
@@ -348,6 +360,14 @@ private enum HexSettingsSchema {
 			.geminiApiKey,
 			keyPath: \.geminiApiKey,
 			default: defaults.geminiApiKey,
+			encode: { container, key, value in
+				try container.encodeIfPresent(value, forKey: key)
+			}
+		).eraseToAny(),
+		SettingsField(
+			.openaiApiKey,
+			keyPath: \.openaiApiKey,
+			default: defaults.openaiApiKey,
 			encode: { container, key, value in
 				try container.encodeIfPresent(value, forKey: key)
 			}

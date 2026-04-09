@@ -95,7 +95,7 @@ private struct PromptRow: View {
 			}
 			TextEditor(text: $prompt.text)
 				.font(.body.monospaced())
-				.frame(minHeight: 60, idealHeight: 80)
+				.frame(minHeight: 120, idealHeight: 160)
 				.scrollContentBackground(.hidden)
 				.padding(6)
 				.background(

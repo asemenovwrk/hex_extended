@@ -122,6 +122,7 @@ struct SettingsFeature {
 
     // Gemini post-processing
     case setGeminiApiKey(String?)
+    case setOpenAIApiKey(String?)
     case setGeminiModel(String)
     case setGeminiPostProcessingEnabled(Bool)
     case setGeminiDirectAudioMode(Bool)
@@ -635,8 +636,18 @@ struct SettingsFeature {
         state.$hexSettings.withLock { $0.geminiApiKey = key }
         return .none
 
+      case let .setOpenAIApiKey(key):
+        state.$hexSettings.withLock { $0.openaiApiKey = key }
+        return .none
+
       case let .setGeminiModel(model):
-        state.$hexSettings.withLock { $0.geminiModel = model }
+        state.$hexSettings.withLock {
+          $0.geminiModel = model
+          // Disable direct audio for OpenAI models (they don't support audio input)
+          if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
+            $0.geminiDirectAudioMode = false
+          }
+        }
         return .none
 
       case let .setGeminiPostProcessingEnabled(enabled):

@@ -9,6 +9,8 @@ private let aiLogger = HexLog.transcription
 struct AIResult: Sendable {
 	let text: String
 	let duration: TimeInterval
+	let inputTokens: Int?
+	let outputTokens: Int?
 }
 
 // MARK: - Provider detection
@@ -32,8 +34,8 @@ struct GeminiClient: Sendable {
 	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> AIResult
 
 	init(
-		postProcess: @escaping @Sendable (String, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0) },
-		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0) }
+		postProcess: @escaping @Sendable (String, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) },
+		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) }
 	) {
 		self.postProcess = postProcess
 		self.transcribeAudio = transcribeAudio
@@ -67,58 +69,63 @@ extension DependencyValues {
 // MARK: - Live Implementation
 
 private enum AIClientLive {
+	private struct RawResult {
+		let text: String
+		let inputTokens: Int?
+		let outputTokens: Int?
+	}
+
 	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
 		let start = Date()
 		let provider = AIProvider.from(model: model)
-		let resultText: String
+		let raw: RawResult
 
 		switch provider {
 		case .gemini:
-			resultText = try await geminiRequest(
+			raw = try await geminiRequest(
 				systemPrompt: prompt,
 				userParts: [["text": text]],
 				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
 			)
 		case .openai:
-			resultText = try await openaiRequest(
+			raw = try await openaiRequest(
 				systemPrompt: prompt,
 				userContent: text,
 				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
 			)
 		}
 
-		return AIResult(text: resultText, duration: Date().timeIntervalSince(start))
+		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens)
 	}
 
 	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
 		let start = Date()
 		let provider = AIProvider.from(model: model)
-		let resultText: String
+		let raw: RawResult
 
 		switch provider {
 		case .gemini:
 			let audioData = try Data(contentsOf: audioURL)
 			let base64Audio = audioData.base64EncodedString()
-			resultText = try await geminiRequest(
+			raw = try await geminiRequest(
 				systemPrompt: prompt,
 				userParts: [["inlineData": ["mimeType": "audio/wav", "data": base64Audio]]],
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)
 		case .openai:
-			// OpenAI audio transcription: use base64 audio in user message
 			let audioData = try Data(contentsOf: audioURL)
 			let base64Audio = audioData.base64EncodedString()
 			let userContent: [[String: Any]] = [
 				["type": "input_audio", "input_audio": ["data": base64Audio, "format": "wav"]]
 			]
-			resultText = try await openaiRequest(
+			raw = try await openaiRequest(
 				systemPrompt: prompt,
 				userContentParts: userContent,
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)
 		}
 
-		return AIResult(text: resultText, duration: Date().timeIntervalSince(start))
+		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens)
 	}
 
 	// MARK: - Gemini API
@@ -127,8 +134,8 @@ private enum AIClientLive {
 		systemPrompt: String,
 		userParts: [[String: Any]],
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
-	) async throws -> String {
-		var body: [String: Any] = [
+	) async throws -> RawResult {
+		let body: [String: Any] = [
 			"systemInstruction": ["parts": [["text": systemPrompt]]],
 			"contents": [["parts": userParts]],
 			"generationConfig": ["thinkingConfig": ["thinkingBudget": thinkingBudget]]
@@ -154,7 +161,12 @@ private enum AIClientLive {
 			  let resultText = firstPart["text"] as? String
 		else { throw AIError.parsingFailed }
 
-		return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+		// Parse usage: usageMetadata.promptTokenCount / candidatesTokenCount
+		let usage = json["usageMetadata"] as? [String: Any]
+		let inputTokens = usage?["promptTokenCount"] as? Int
+		let outputTokens = usage?["candidatesTokenCount"] as? Int
+
+		return RawResult(text: resultText.trimmingCharacters(in: .whitespacesAndNewlines), inputTokens: inputTokens, outputTokens: outputTokens)
 	}
 
 	// MARK: - OpenAI API
@@ -163,10 +175,9 @@ private enum AIClientLive {
 		systemPrompt: String,
 		userContent: String,
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
-	) async throws -> String {
-		let userMessage: [String: Any] = ["role": "user", "content": userContent]
+	) async throws -> RawResult {
 		return try await openaiRequestInternal(
-			systemPrompt: systemPrompt, userMessage: userMessage,
+			systemPrompt: systemPrompt, userContent: userContent,
 			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
 		)
 	}
@@ -175,30 +186,28 @@ private enum AIClientLive {
 		systemPrompt: String,
 		userContentParts: [[String: Any]],
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
-	) async throws -> String {
-		let userMessage: [String: Any] = ["role": "user", "content": userContentParts]
+	) async throws -> RawResult {
 		return try await openaiRequestInternal(
-			systemPrompt: systemPrompt, userMessage: userMessage,
+			systemPrompt: systemPrompt, userContent: userContentParts,
 			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
 		)
 	}
 
 	private static func openaiRequestInternal(
-		systemPrompt: String, userMessage: [String: Any],
+		systemPrompt: String, userContent: Any,
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
-	) async throws -> String {
+	) async throws -> RawResult {
 		let reasoningEffort: String = switch thinkingBudget {
 		case 0: "none"
 		case 1...1024: "low"
 		case 1025...4096: "medium"
 		default: "high"
 		}
-
 		let body: [String: Any] = [
 			"model": model,
 			"messages": [
-				["role": "system", "content": systemPrompt],
-				userMessage
+				["role": "developer", "content": systemPrompt],
+				["role": "user", "content": userContent]
 			],
 			"reasoning_effort": reasoningEffort
 		]
@@ -221,7 +230,12 @@ private enum AIClientLive {
 			  let resultText = message["content"] as? String
 		else { throw AIError.parsingFailed }
 
-		return resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+		// Parse usage: usage.prompt_tokens / completion_tokens
+		let usage = json["usage"] as? [String: Any]
+		let inputTokens = usage?["prompt_tokens"] as? Int
+		let outputTokens = usage?["completion_tokens"] as? Int
+
+		return RawResult(text: resultText.trimmingCharacters(in: .whitespacesAndNewlines), inputTokens: inputTokens, outputTokens: outputTokens)
 	}
 
 	// MARK: - Shared

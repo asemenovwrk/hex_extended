@@ -24,6 +24,9 @@ struct TranscriptionFeature {
     var isPrewarming: Bool = false
     var error: String?
     var lastGeminiProcessingTime: TimeInterval?
+    var lastAIInputTokens: Int?
+    var lastAIOutputTokens: Int?
+    var isPostProcessing: Bool = false
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var sourceAppBundleID: String?
@@ -60,8 +63,8 @@ struct TranscriptionFeature {
     // Error dismissal
     case dismissError
 
-    // Gemini
-    case geminiTimingUpdated(TimeInterval)
+    // AI processing stats
+    case geminiTimingUpdated(TimeInterval, inputTokens: Int?, outputTokens: Int?)
     case geminiPostProcessingCompleted
   }
 
@@ -138,19 +141,21 @@ struct TranscriptionFeature {
         state.error = nil
         return .none
 
-      case let .geminiTimingUpdated(duration):
+      case let .geminiTimingUpdated(duration, inputTokens, outputTokens):
         state.lastGeminiProcessingTime = duration
+        state.lastAIInputTokens = inputTokens
+        state.lastAIOutputTokens = outputTokens
         return .none
 
       case .geminiPostProcessingCompleted:
-        state.isTranscribing = false
+        state.isPostProcessing = false
         return .none
 
       // MARK: - Cancel/Discard Flow
 
       case .cancel:
         // Only cancel if we're in the middle of recording, transcribing, or post-processing
-        guard state.isRecording || state.isTranscribing else {
+        guard state.isRecording || state.isTranscribing || state.isPostProcessing else {
           return .none
         }
         return handleCancel(&state)
@@ -377,7 +382,7 @@ private extension TranscriptionFeature {
 
     // Gemini settings
     let geminiEnabled = state.hexSettings.geminiPostProcessingEnabled
-    let geminiApiKey = state.hexSettings.geminiApiKey
+    let aiApiKey = state.hexSettings.activeAIApiKey
     let geminiPromptText = state.hexSettings.selectedGeminiPrompt?.text
     let geminiModel = state.hexSettings.geminiModel
     let geminiDirectAudio = state.hexSettings.geminiDirectAudioMode
@@ -399,10 +404,10 @@ private extension TranscriptionFeature {
         // Gemini Direct Audio mode: skip Whisper entirely
         if geminiDirectAudio,
            geminiEnabled,
-           let apiKey = geminiApiKey, !apiKey.isEmpty,
+           let apiKey = aiApiKey, !apiKey.isEmpty,
            let prompt = geminiPromptText, !prompt.isEmpty {
           let result = try await gemini.transcribeAudio(capturedURL, prompt, apiKey, geminiModel, geminiThinkingBudget)
-          await send(.geminiTimingUpdated(result.duration))
+          await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
           transcriptionFeatureLogger.notice("Gemini direct audio transcription: \(result.text.count) chars in \(String(format: "%.2f", result.duration))s")
           await send(.transcriptionResult(result.text, capturedURL))
           return
@@ -438,13 +443,14 @@ private extension TranscriptionFeature {
   ) -> Effect<Action> {
     state.isPrewarming = false
 
-    // Keep isTranscribing=true if Gemini post-processing will run
+    state.isTranscribing = false
+    // Switch to post-processing indicator if Gemini will run
     let willRunGemini = state.hexSettings.geminiPostProcessingEnabled
       && !state.hexSettings.geminiDirectAudioMode
-      && state.hexSettings.geminiApiKey != nil
-      && state.hexSettings.selectedGeminiPrompt?.text != nil
-    if !willRunGemini {
-      state.isTranscribing = false
+      && !(state.hexSettings.activeAIApiKey ?? "").isEmpty
+      && !(state.hexSettings.selectedGeminiPrompt?.text ?? "").isEmpty
+    if willRunGemini {
+      state.isPostProcessing = true
     }
 
     // Check for force quit command (emergency escape hatch)
@@ -499,7 +505,7 @@ private extension TranscriptionFeature {
     let transcriptionHistory = state.$transcriptionHistory
     let geminiEnabled = state.hexSettings.geminiPostProcessingEnabled
     let geminiDirectAudio = state.hexSettings.geminiDirectAudioMode
-    let geminiApiKey = state.hexSettings.geminiApiKey
+    let aiApiKey = state.hexSettings.activeAIApiKey
     let geminiPromptText = state.hexSettings.selectedGeminiPrompt?.text
     let geminiModel = state.hexSettings.geminiModel
     let geminiThinkingBudget = state.hexSettings.geminiThinkingBudget
@@ -509,20 +515,25 @@ private extension TranscriptionFeature {
 
       // Gemini text post-processing (skip if direct audio mode — already processed)
       if geminiEnabled, !geminiDirectAudio,
-         let apiKey = geminiApiKey, !apiKey.isEmpty,
+         let apiKey = aiApiKey, !apiKey.isEmpty,
          let prompt = geminiPromptText, !prompt.isEmpty {
         do {
           let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
           finalResult = result.text
-          await send(.geminiTimingUpdated(result.duration))
+          await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
           transcriptionFeatureLogger.info("Gemini post-processing applied in \(String(format: "%.2f", result.duration))s")
-        } catch {
-          transcriptionFeatureLogger.error("Gemini post-processing failed, retrying: \(error.localizedDescription)")
-          // Retry once
-          let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
-          finalResult = result.text
-          await send(.geminiTimingUpdated(result.duration))
-          transcriptionFeatureLogger.info("Gemini post-processing applied on retry in \(String(format: "%.2f", result.duration))s")
+        } catch let firstError {
+          transcriptionFeatureLogger.error("Gemini post-processing failed, retrying: \(firstError.localizedDescription)")
+          do {
+            let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
+            finalResult = result.text
+            await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
+            transcriptionFeatureLogger.info("Gemini post-processing applied on retry in \(String(format: "%.2f", result.duration))s")
+          } catch {
+            await send(.geminiPostProcessingCompleted)
+            await send(.transcriptionError(error, audioURL))
+            return
+          }
         }
         await send(.geminiPostProcessingCompleted)
       }
@@ -550,6 +561,7 @@ private extension TranscriptionFeature {
   ) -> Effect<Action> {
     state.isTranscribing = false
     state.isPrewarming = false
+    state.isPostProcessing = false
     state.error = error.localizedDescription
     
     if let audioURL {
@@ -608,6 +620,7 @@ private extension TranscriptionFeature {
     state.isTranscribing = false
     state.isRecording = false
     state.isPrewarming = false
+    state.isPostProcessing = false
 
     return .merge(
       .cancel(id: CancelID.transcription),
@@ -647,7 +660,9 @@ struct TranscriptionView: View {
   @ObserveInjection var inject
 
   var status: TranscriptionIndicatorView.Status {
-    if store.isTranscribing {
+    if store.isPostProcessing {
+      return .postProcessing
+    } else if store.isTranscribing {
       return .transcribing
     } else if store.isRecording {
       return .recording

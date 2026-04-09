@@ -16,6 +16,7 @@ struct TranscriptionIndicatorView: View {
     case optionKeyPressed
     case recording
     case transcribing
+    case postProcessing
     case prewarming
   }
 
@@ -23,12 +24,16 @@ struct TranscriptionIndicatorView: View {
   var meter: Meter
 
   let transcribeBaseColor: Color = .blue
+  let postProcessBaseColor: Color = .green
+  private var activeBaseColor: Color {
+    status == .postProcessing ? postProcessBaseColor : transcribeBaseColor
+  }
   private var backgroundColor: Color {
     switch status {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.black
     case .recording: return .red.mix(with: .black, by: 0.5).mix(with: .red, by: meter.averagePower * 3)
-    case .transcribing: return transcribeBaseColor.mix(with: .black, by: 0.5)
+    case .transcribing, .postProcessing: return activeBaseColor.mix(with: .black, by: 0.5)
     case .prewarming: return transcribeBaseColor.mix(with: .black, by: 0.5)
     }
   }
@@ -38,7 +43,7 @@ struct TranscriptionIndicatorView: View {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.black
     case .recording: return Color.red.mix(with: .white, by: 0.1).opacity(0.6)
-    case .transcribing: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
+    case .transcribing, .postProcessing: return activeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     case .prewarming: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     }
   }
@@ -48,7 +53,7 @@ struct TranscriptionIndicatorView: View {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.clear
     case .recording: return Color.red
-    case .transcribing: return transcribeBaseColor
+    case .transcribing, .postProcessing: return activeBaseColor
     case .prewarming: return transcribeBaseColor
     }
   }
@@ -120,8 +125,8 @@ struct TranscriptionIndicatorView: View {
         .changeEffect(.glow(color: .red.opacity(0.5), radius: 8), value: status)
         .changeEffect(.shine(angle: .degrees(0), duration: 0.6), value: transcribeEffect)
         .compositingGroup()
-        .task(id: status == .transcribing) {
-          while status == .transcribing, !Task.isCancelled {
+        .task(id: status == .transcribing || status == .postProcessing) {
+          while (status == .transcribing || status == .postProcessing), !Task.isCancelled {
             transcribeEffect += 1
             try? await Task.sleep(for: .seconds(0.25))
           }
