@@ -21,5 +21,7 @@
 	</dict>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>Hex needs Input Monitoring permission so your global hotkey works in every app.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Hex needs Screen Recording permission to include a screenshot of your active window as context for AI post-processing.</string>
 </dict>
 </plist>

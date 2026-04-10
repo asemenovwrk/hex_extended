@@ -131,6 +131,9 @@ struct SettingsFeature {
     case updateGeminiPrompt(TranscriptionPrompt)
     case removeGeminiPrompt(UUID)
     case setGeminiThinkingBudget(Int)
+    case setGeminiIncludeScreenshot(Bool)
+    case setGeminiScreenshotMaxDimension(Int)
+    case setOpenAIScreenshotDetail(String)
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -688,6 +691,28 @@ struct SettingsFeature {
 
       case let .setGeminiThinkingBudget(budget):
         state.$hexSettings.withLock { $0.geminiThinkingBudget = budget }
+        return .none
+
+      case let .setGeminiIncludeScreenshot(enabled):
+        state.$hexSettings.withLock { $0.geminiIncludeScreenshot = enabled }
+        // When turning ON, trigger Screen Recording permission prompt.
+        // If already granted, this is a no-op.
+        if enabled {
+          return .run { _ in
+            @Dependency(\.screenshot) var screenshot
+            if !screenshot.hasPermission() {
+              screenshot.requestPermission()
+            }
+          }
+        }
+        return .none
+
+      case let .setGeminiScreenshotMaxDimension(value):
+        state.$hexSettings.withLock { $0.geminiScreenshotMaxDimension = value }
+        return .none
+
+      case let .setOpenAIScreenshotDetail(value):
+        state.$hexSettings.withLock { $0.openaiScreenshotDetail = value }
         return .none
 
       }

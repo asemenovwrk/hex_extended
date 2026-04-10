@@ -57,6 +57,9 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var selectedGeminiPromptID: UUID?
 	public var geminiDirectAudioMode: Bool
 	public var geminiThinkingBudget: Int
+	public var geminiIncludeScreenshot: Bool
+	public var geminiScreenshotMaxDimension: Int
+	public var openaiScreenshotDetail: String
 
 	public var selectedTranscriptionPrompt: TranscriptionPrompt? {
 		guard let id = selectedTranscriptionPromptID else { return nil }
@@ -116,7 +119,10 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		geminiPrompts: [TranscriptionPrompt] = [],
 		selectedGeminiPromptID: UUID? = nil,
 		geminiDirectAudioMode: Bool = false,
-		geminiThinkingBudget: Int = 0
+		geminiThinkingBudget: Int = 0,
+		geminiIncludeScreenshot: Bool = false,
+		geminiScreenshotMaxDimension: Int = 512,
+		openaiScreenshotDetail: String = "low"
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.soundEffectsVolume = soundEffectsVolume
@@ -152,6 +158,9 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.selectedGeminiPromptID = selectedGeminiPromptID
 		self.geminiDirectAudioMode = geminiDirectAudioMode
 		self.geminiThinkingBudget = geminiThinkingBudget
+		self.geminiIncludeScreenshot = geminiIncludeScreenshot
+		self.geminiScreenshotMaxDimension = geminiScreenshotMaxDimension
+		self.openaiScreenshotDetail = openaiScreenshotDetail
 		normalizeDoubleTapSettings()
 	}
 
@@ -210,6 +219,9 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case selectedGeminiPromptID
 	case geminiDirectAudioMode
 	case geminiThinkingBudget
+	case geminiIncludeScreenshot
+	case geminiScreenshotMaxDimension
+	case openaiScreenshotDetail
 }
 
 private struct SettingsField<Value: Codable & Sendable> {
@@ -384,6 +396,20 @@ private enum HexSettingsSchema {
 			}
 		).eraseToAny(),
 		SettingsField(.geminiDirectAudioMode, keyPath: \.geminiDirectAudioMode, default: defaults.geminiDirectAudioMode).eraseToAny(),
-		SettingsField(.geminiThinkingBudget, keyPath: \.geminiThinkingBudget, default: defaults.geminiThinkingBudget).eraseToAny()
+		SettingsField(.geminiThinkingBudget, keyPath: \.geminiThinkingBudget, default: defaults.geminiThinkingBudget).eraseToAny(),
+		SettingsField(.geminiIncludeScreenshot, keyPath: \.geminiIncludeScreenshot, default: defaults.geminiIncludeScreenshot).eraseToAny(),
+		SettingsField(
+			.geminiScreenshotMaxDimension,
+			keyPath: \.geminiScreenshotMaxDimension,
+			default: defaults.geminiScreenshotMaxDimension,
+			decode: { container, key, defaultValue in
+				// Migrate old presets (768/1024/1568 — all gave ~1548 tok for 16:9)
+				// to new meaningful presets (384/512/1024).
+				let allowed: Set<Int> = [384, 512, 1024]
+				let raw = try container.decodeIfPresent(Int.self, forKey: key) ?? defaultValue
+				return allowed.contains(raw) ? raw : defaultValue
+			}
+		).eraseToAny(),
+		SettingsField(.openaiScreenshotDetail, keyPath: \.openaiScreenshotDetail, default: defaults.openaiScreenshotDetail).eraseToAny()
 	]
 }

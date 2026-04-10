@@ -30,12 +30,12 @@ enum AIProvider {
 // MARK: - Client Interface
 
 struct GeminiClient: Sendable {
-	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> AIResult
-	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int) async throws -> AIResult
+	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String) async throws -> AIResult
+	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String) async throws -> AIResult
 
 	init(
-		postProcess: @escaping @Sendable (String, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) },
-		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int) async throws -> AIResult = { _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) }
+		postProcess: @escaping @Sendable (String, String, String, String, Int, Data?, String) async throws -> AIResult = { _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) },
+		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int, Data?, String) async throws -> AIResult = { _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) }
 	) {
 		self.postProcess = postProcess
 		self.transcribeAudio = transcribeAudio
@@ -45,11 +45,11 @@ struct GeminiClient: Sendable {
 extension GeminiClient: DependencyKey {
 	static var liveValue: Self {
 		Self(
-			postProcess: { text, prompt, apiKey, model, thinkingBudget in
-				try await AIClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
+			postProcess: { text, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail in
+				try await AIClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail)
 			},
-			transcribeAudio: { audioURL, prompt, apiKey, model, thinkingBudget in
-				try await AIClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget)
+			transcribeAudio: { audioURL, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail in
+				try await AIClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail)
 			}
 		)
 	}
@@ -75,51 +75,88 @@ private enum AIClientLive {
 		let outputTokens: Int?
 	}
 
-	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
+	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String) async throws -> AIResult {
 		let start = Date()
 		let provider = AIProvider.from(model: model)
 		let raw: RawResult
 
+		// When a screenshot is included, nudge the model to use it as visual context.
+		let effectivePrompt = imageData != nil
+			? prompt + "\n\nYou also receive a screenshot of the user's active window for visual context. Use it to better understand what the user is referring to, but output only the corrected transcription text — do not describe the image."
+			: prompt
+
 		switch provider {
 		case .gemini:
+			var userParts: [[String: Any]] = []
+			if let imageData {
+				let base64 = imageData.base64EncodedString()
+				userParts.append(["inlineData": ["mimeType": "image/jpeg", "data": base64]])
+			}
+			userParts.append(["text": text])
 			raw = try await geminiRequest(
-				systemPrompt: prompt,
-				userParts: [["text": text]],
-				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
+				systemPrompt: effectivePrompt,
+				userParts: userParts,
+				apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
 			)
 		case .openai:
-			raw = try await openaiRequest(
-				systemPrompt: prompt,
-				userContent: text,
-				apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
-			)
+			if let imageData {
+				let base64 = imageData.base64EncodedString()
+				let userContent: [[String: Any]] = [
+					["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64)", "detail": openaiDetail]],
+					["type": "text", "text": text]
+				]
+				raw = try await openaiRequest(
+					systemPrompt: effectivePrompt,
+					userContentParts: userContent,
+					apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
+				)
+			} else {
+				raw = try await openaiRequest(
+					systemPrompt: effectivePrompt,
+					userContent: text,
+					apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
+				)
+			}
 		}
 
 		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens)
 	}
 
-	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int) async throws -> AIResult {
+	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String) async throws -> AIResult {
 		let start = Date()
 		let provider = AIProvider.from(model: model)
 		let raw: RawResult
+
+		let effectivePrompt = imageData != nil
+			? prompt + "\n\nYou also receive a screenshot of the user's active window for visual context. Use it to better understand what the user is referring to while transcribing the audio."
+			: prompt
 
 		switch provider {
 		case .gemini:
 			let audioData = try Data(contentsOf: audioURL)
 			let base64Audio = audioData.base64EncodedString()
+			var userParts: [[String: Any]] = []
+			if let imageData {
+				let base64Image = imageData.base64EncodedString()
+				userParts.append(["inlineData": ["mimeType": "image/jpeg", "data": base64Image]])
+			}
+			userParts.append(["inlineData": ["mimeType": "audio/wav", "data": base64Audio]])
 			raw = try await geminiRequest(
-				systemPrompt: prompt,
-				userParts: [["inlineData": ["mimeType": "audio/wav", "data": base64Audio]]],
+				systemPrompt: effectivePrompt,
+				userParts: userParts,
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)
 		case .openai:
 			let audioData = try Data(contentsOf: audioURL)
 			let base64Audio = audioData.base64EncodedString()
-			let userContent: [[String: Any]] = [
-				["type": "input_audio", "input_audio": ["data": base64Audio, "format": "wav"]]
-			]
+			var userContent: [[String: Any]] = []
+			if let imageData {
+				let base64Image = imageData.base64EncodedString()
+				userContent.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)", "detail": openaiDetail]])
+			}
+			userContent.append(["type": "input_audio", "input_audio": ["data": base64Audio, "format": "wav"]])
 			raw = try await openaiRequest(
-				systemPrompt: prompt,
+				systemPrompt: effectivePrompt,
 				userContentParts: userContent,
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)

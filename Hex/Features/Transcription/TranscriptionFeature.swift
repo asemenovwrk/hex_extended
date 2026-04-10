@@ -78,7 +78,25 @@ struct TranscriptionFeature {
   @Dependency(\.recording) var recording
   @Dependency(\.pasteboard) var pasteboard
   @Dependency(\.gemini) var gemini
+  @Dependency(\.screenshot) var screenshot
   @Dependency(\.keyEventMonitor) var keyEventMonitor
+
+  /// Choose the screenshot capture dimension based on the selected AI provider.
+  /// - Gemini: user picks the max dimension directly (controls tile count on 2.5, only
+  ///   meaningful if dropping below the 384px single-tile threshold).
+  /// - OpenAI: token cost is determined purely by the `detail` parameter and the image
+  ///   aspect ratio — OpenAI rescales the image server-side, so client-side resolution
+  ///   doesn't affect tokens. We only resize for bandwidth.
+  static func screenshotMaxDimension(for model: String, settings: HexSettings) -> Int {
+    switch AIProvider.from(model: model) {
+    case .gemini:
+      return settings.geminiScreenshotMaxDimension
+    case .openai:
+      // Low: OpenAI caps at 512×512 internally — send small for bandwidth.
+      // High: OpenAI rescales shortest side to 768 — sending 1024 is enough; larger is wasted bytes.
+      return settings.openaiScreenshotDetail == "high" ? 1024 : 512
+    }
+  }
   @Dependency(\.soundEffects) var soundEffect
   @Dependency(\.sleepManagement) var sleepManagement
   @Dependency(\.date.now) var now
@@ -387,10 +405,13 @@ private extension TranscriptionFeature {
     let geminiModel = state.hexSettings.geminiModel
     let geminiDirectAudio = state.hexSettings.geminiDirectAudioMode
     let geminiThinkingBudget = state.hexSettings.geminiThinkingBudget
+    let includeScreenshot = state.hexSettings.geminiIncludeScreenshot
+    let screenshotMaxDim = TranscriptionFeature.screenshotMaxDimension(for: geminiModel, settings: state.hexSettings)
+    let openaiDetail = state.hexSettings.openaiScreenshotDetail
 
     state.isPrewarming = true
 
-    return .run { [sleepManagement, gemini] send in
+    return .run { [sleepManagement, gemini, screenshot] send in
       // Allow system to sleep again
       await sleepManagement.allowSleep()
 
@@ -406,9 +427,15 @@ private extension TranscriptionFeature {
            geminiEnabled,
            let apiKey = aiApiKey, !apiKey.isEmpty,
            let prompt = geminiPromptText, !prompt.isEmpty {
-          let result = try await gemini.transcribeAudio(capturedURL, prompt, apiKey, geminiModel, geminiThinkingBudget)
+          // Capture screenshot of active window BEFORE making the API call,
+          // while the target window is still frontmost.
+          if includeScreenshot {
+            transcriptionFeatureLogger.info("Direct audio: capturing screenshot with maxDim=\(screenshotMaxDim)")
+          }
+          let imageData = includeScreenshot ? await screenshot.captureFrontmostWindow(screenshotMaxDim) : nil
+          let result = try await gemini.transcribeAudio(capturedURL, prompt, apiKey, geminiModel, geminiThinkingBudget, imageData, openaiDetail)
           await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
-          transcriptionFeatureLogger.notice("Gemini direct audio transcription: \(result.text.count) chars in \(String(format: "%.2f", result.duration))s")
+          transcriptionFeatureLogger.notice("Gemini direct audio transcription: \(result.text.count) chars in \(String(format: "%.2f", result.duration))s\(imageData != nil ? " (with screenshot)" : "")")
           await send(.transcriptionResult(result.text, capturedURL))
           return
         }
@@ -509,23 +536,32 @@ private extension TranscriptionFeature {
     let geminiPromptText = state.hexSettings.selectedGeminiPrompt?.text
     let geminiModel = state.hexSettings.geminiModel
     let geminiThinkingBudget = state.hexSettings.geminiThinkingBudget
+    let includeScreenshot = state.hexSettings.geminiIncludeScreenshot
+    let screenshotMaxDim = TranscriptionFeature.screenshotMaxDimension(for: geminiModel, settings: state.hexSettings)
+    let openaiDetail = state.hexSettings.openaiScreenshotDetail
 
-    return .run { [gemini] send in
+    return .run { [gemini, screenshot] send in
       var finalResult = modifiedResult
 
       // Gemini text post-processing (skip if direct audio mode — already processed)
       if geminiEnabled, !geminiDirectAudio,
          let apiKey = aiApiKey, !apiKey.isEmpty,
          let prompt = geminiPromptText, !prompt.isEmpty {
+        // Capture screenshot of the frontmost window right before post-processing.
+        // The target app is still focused (Hex is a menu-bar app, no focus steal).
+        if includeScreenshot {
+          transcriptionFeatureLogger.info("Post-processing: capturing screenshot with maxDim=\(screenshotMaxDim)")
+        }
+        let imageData = includeScreenshot ? await screenshot.captureFrontmostWindow(screenshotMaxDim) : nil
         do {
-          let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
+          let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget, imageData, openaiDetail)
           finalResult = result.text
           await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
-          transcriptionFeatureLogger.info("Gemini post-processing applied in \(String(format: "%.2f", result.duration))s")
+          transcriptionFeatureLogger.info("Gemini post-processing applied in \(String(format: "%.2f", result.duration))s\(imageData != nil ? " (with screenshot)" : "")")
         } catch let firstError {
           transcriptionFeatureLogger.error("Gemini post-processing failed, retrying: \(firstError.localizedDescription)")
           do {
-            let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget)
+            let result = try await gemini.postProcess(finalResult, prompt, apiKey, geminiModel, geminiThinkingBudget, imageData, openaiDetail)
             finalResult = result.text
             await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
             transcriptionFeatureLogger.info("Gemini post-processing applied on retry in \(String(format: "%.2f", result.duration))s")

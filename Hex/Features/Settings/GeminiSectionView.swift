@@ -85,6 +85,51 @@ struct GeminiSectionView: View {
 					)
 				}
 
+				// Screenshot context
+				VStack(alignment: .leading, spacing: 4) {
+					Toggle(
+						"Include screenshot of active window",
+						isOn: Binding(
+							get: { store.hexSettings.geminiIncludeScreenshot },
+							set: { store.send(.setGeminiIncludeScreenshot($0)) }
+						)
+					)
+					Text("Sends a JPEG of the frontmost window alongside the transcription so the model has visual context for what you were looking at.")
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.fixedSize(horizontal: false, vertical: true)
+				}
+
+				// Screenshot quality (provider-specific)
+				if store.hexSettings.geminiIncludeScreenshot {
+					if selectedProvider == "google" {
+						Picker(
+							"Screenshot Quality",
+							selection: Binding(
+								get: { store.hexSettings.geminiScreenshotMaxDimension },
+								set: { store.send(.setGeminiScreenshotMaxDimension($0)) }
+							)
+						) {
+							Text("Low — 384px (~258 tok, layout only)").tag(384)
+							Text("Medium — 512px (~1032 tok)").tag(512)
+							Text("High — 1024px (~1548 tok, text readable)").tag(1024)
+						}
+						.pickerStyle(.menu)
+					} else {
+						Picker(
+							"Screenshot Detail",
+							selection: Binding(
+								get: { store.hexSettings.openaiScreenshotDetail },
+								set: { store.send(.setOpenAIScreenshotDetail($0)) }
+							)
+						) {
+							Text("Low — 85 tok (flat)").tag("low")
+							Text("High — ~765 tok (4:3) / ~1105 tok (16:9)").tag("high")
+						}
+						.pickerStyle(.menu)
+					}
+				}
+
 				// Prompt picker
 				HStack {
 					Picker(
