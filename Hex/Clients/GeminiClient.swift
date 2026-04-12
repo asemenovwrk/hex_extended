@@ -80,10 +80,11 @@ private enum AIClientLive {
 		let provider = AIProvider.from(model: model)
 		let raw: RawResult
 
-		// When a screenshot is included, nudge the model to use it as visual context.
-		let effectivePrompt = imageData != nil
-			? prompt + "\n\nYou also receive a screenshot of the user's active window for visual context. Use it to better understand what the user is referring to, but output only the corrected transcription text — do not describe the image."
-			: prompt
+		// The user's prompt is passed verbatim as the system instruction — we don't
+		// modify it. When a screenshot is present, a neutral marker is added to the
+		// user message so the model knows what the image is, without overriding the
+		// user's own instructions.
+		let imageNote = "(Screenshot of the user's currently active window, provided as visual context for the text below.)"
 
 		switch provider {
 		case .gemini:
@@ -91,10 +92,11 @@ private enum AIClientLive {
 			if let imageData {
 				let base64 = imageData.base64EncodedString()
 				userParts.append(["inlineData": ["mimeType": "image/jpeg", "data": base64]])
+				userParts.append(["text": imageNote])
 			}
 			userParts.append(["text": text])
 			raw = try await geminiRequest(
-				systemPrompt: effectivePrompt,
+				systemPrompt: prompt,
 				userParts: userParts,
 				apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
 			)
@@ -103,16 +105,16 @@ private enum AIClientLive {
 				let base64 = imageData.base64EncodedString()
 				let userContent: [[String: Any]] = [
 					["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64)", "detail": openaiDetail]],
-					["type": "text", "text": text]
+					["type": "text", "text": "\(imageNote)\n\n\(text)"]
 				]
 				raw = try await openaiRequest(
-					systemPrompt: effectivePrompt,
+					systemPrompt: prompt,
 					userContentParts: userContent,
 					apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
 				)
 			} else {
 				raw = try await openaiRequest(
-					systemPrompt: effectivePrompt,
+					systemPrompt: prompt,
 					userContent: text,
 					apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
 				)
@@ -127,9 +129,9 @@ private enum AIClientLive {
 		let provider = AIProvider.from(model: model)
 		let raw: RawResult
 
-		let effectivePrompt = imageData != nil
-			? prompt + "\n\nYou also receive a screenshot of the user's active window for visual context. Use it to better understand what the user is referring to while transcribing the audio."
-			: prompt
+		// Same approach as postProcess: user's prompt passes through verbatim, neutral
+		// marker added alongside the image in the user message when one is present.
+		let imageNote = "(Screenshot of the user's currently active window, provided as visual context for the audio below.)"
 
 		switch provider {
 		case .gemini:
@@ -139,10 +141,11 @@ private enum AIClientLive {
 			if let imageData {
 				let base64Image = imageData.base64EncodedString()
 				userParts.append(["inlineData": ["mimeType": "image/jpeg", "data": base64Image]])
+				userParts.append(["text": imageNote])
 			}
 			userParts.append(["inlineData": ["mimeType": "audio/wav", "data": base64Audio]])
 			raw = try await geminiRequest(
-				systemPrompt: effectivePrompt,
+				systemPrompt: prompt,
 				userParts: userParts,
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)
@@ -153,10 +156,11 @@ private enum AIClientLive {
 			if let imageData {
 				let base64Image = imageData.base64EncodedString()
 				userContent.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64Image)", "detail": openaiDetail]])
+				userContent.append(["type": "text", "text": imageNote])
 			}
 			userContent.append(["type": "input_audio", "input_audio": ["data": base64Audio, "format": "wav"]])
 			raw = try await openaiRequest(
-				systemPrompt: effectivePrompt,
+				systemPrompt: prompt,
 				userContentParts: userContent,
 				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
 			)
