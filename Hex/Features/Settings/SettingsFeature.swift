@@ -134,6 +134,15 @@ struct SettingsFeature {
     case setGeminiIncludeScreenshot(Bool)
     case setGeminiScreenshotMaxDimension(Int)
     case setOpenAIScreenshotDetail(String)
+    // Local LLM (OpenAI-compatible servers like LM Studio)
+    case setAIProvider(String)
+    case setLocalLLMBaseURL(String)
+    case setLocalLLMModel(String)
+    case setLocalLLMApiKey(String?)
+    case setLocalLLMMaxTokens(Int)
+    case setLocalLLMScreenshotScale(Double)
+    case setLocalLLMSharpenScreenshot(Bool)
+    case setDebugSaveSentScreenshot(Bool)
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -646,11 +655,53 @@ struct SettingsFeature {
       case let .setGeminiModel(model):
         state.$hexSettings.withLock {
           $0.geminiModel = model
+          // Selecting a cloud model also sets the explicit provider (the model
+          // prefix disambiguates Google vs OpenAI).
+          let isOpenAI = model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4")
+          $0.aiProvider = isOpenAI ? "openai" : "google"
           // Disable direct audio for OpenAI models (they don't support audio input)
-          if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
+          if isOpenAI {
             $0.geminiDirectAudioMode = false
           }
         }
+        return .none
+
+      case let .setAIProvider(provider):
+        state.$hexSettings.withLock {
+          $0.aiProvider = provider
+          // Direct audio is Google-only; clear it when leaving Google.
+          if provider != "google" {
+            $0.geminiDirectAudioMode = false
+          }
+        }
+        return .none
+
+      case let .setLocalLLMBaseURL(url):
+        state.$hexSettings.withLock { $0.localLLMBaseURL = url }
+        return .none
+
+      case let .setLocalLLMModel(model):
+        state.$hexSettings.withLock { $0.localLLMModel = model }
+        return .none
+
+      case let .setLocalLLMApiKey(key):
+        state.$hexSettings.withLock { $0.localLLMApiKey = key }
+        return .none
+
+      case let .setLocalLLMMaxTokens(tokens):
+        state.$hexSettings.withLock { $0.localLLMMaxTokens = tokens }
+        return .none
+
+      case let .setLocalLLMScreenshotScale(scale):
+        state.$hexSettings.withLock { $0.localLLMScreenshotScale = scale }
+        return .none
+
+      case let .setLocalLLMSharpenScreenshot(enabled):
+        state.$hexSettings.withLock { $0.localLLMSharpenScreenshot = enabled }
+        return .none
+
+      case let .setDebugSaveSentScreenshot(enabled):
+        state.$hexSettings.withLock { $0.debugSaveSentScreenshot = enabled }
         return .none
 
       case let .setGeminiPostProcessingEnabled(enabled):

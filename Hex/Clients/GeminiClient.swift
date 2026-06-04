@@ -18,6 +18,9 @@ struct AIResult: Sendable {
 enum AIProvider {
 	case gemini
 	case openai
+	/// OpenAI-compatible local server (e.g. LM Studio, Ollama). Uses the OpenAI
+	/// request shape against a user-supplied base URL.
+	case local
 
 	static func from(model: String) -> AIProvider {
 		if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
@@ -30,12 +33,12 @@ enum AIProvider {
 // MARK: - Client Interface
 
 struct GeminiClient: Sendable {
-	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String) async throws -> AIResult
-	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String) async throws -> AIResult
+	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String, _ baseURL: String?, _ maxTokens: Int?) async throws -> AIResult
+	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String, _ baseURL: String?, _ maxTokens: Int?) async throws -> AIResult
 
 	init(
-		postProcess: @escaping @Sendable (String, String, String, String, Int, Data?, String) async throws -> AIResult = { _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) },
-		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int, Data?, String) async throws -> AIResult = { _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) }
+		postProcess: @escaping @Sendable (String, String, String, String, Int, Data?, String, String?, Int?) async throws -> AIResult = { _, _, _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) },
+		transcribeAudio: @escaping @Sendable (URL, String, String, String, Int, Data?, String, String?, Int?) async throws -> AIResult = { _, _, _, _, _, _, _, _, _ in AIResult(text: "", duration: 0, inputTokens: nil, outputTokens: nil) }
 	) {
 		self.postProcess = postProcess
 		self.transcribeAudio = transcribeAudio
@@ -45,11 +48,11 @@ struct GeminiClient: Sendable {
 extension GeminiClient: DependencyKey {
 	static var liveValue: Self {
 		Self(
-			postProcess: { text, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail in
-				try await AIClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail)
+			postProcess: { text, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail, baseURL, maxTokens in
+				try await AIClientLive.postProcess(text: text, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail, baseURL: baseURL, maxTokens: maxTokens)
 			},
-			transcribeAudio: { audioURL, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail in
-				try await AIClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail)
+			transcribeAudio: { audioURL, prompt, apiKey, model, thinkingBudget, imageData, openaiDetail, baseURL, maxTokens in
+				try await AIClientLive.transcribeAudio(audioURL: audioURL, prompt: prompt, apiKey: apiKey, model: model, thinkingBudget: thinkingBudget, imageData: imageData, openaiDetail: openaiDetail, baseURL: baseURL, maxTokens: maxTokens)
 			}
 		)
 	}
@@ -75,9 +78,11 @@ private enum AIClientLive {
 		let outputTokens: Int?
 	}
 
-	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String) async throws -> AIResult {
+	static func postProcess(text: String, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String, baseURL: String?, maxTokens: Int?) async throws -> AIResult {
 		let start = Date()
-		let provider = AIProvider.from(model: model)
+		// A non-nil baseURL means a local OpenAI-compatible server; otherwise infer
+		// the cloud provider from the model name.
+		let provider: AIProvider = baseURL != nil ? .local : AIProvider.from(model: model)
 		let raw: RawResult
 
 		// The user's prompt is passed verbatim as the system instruction — we don't
@@ -100,7 +105,9 @@ private enum AIClientLive {
 				userParts: userParts,
 				apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
 			)
-		case .openai:
+		case .openai, .local:
+			let endpoint = provider == .local ? (baseURL ?? "") : openaiCloudBaseURL
+			let timeout: TimeInterval = provider == .local ? 120 : (imageData != nil ? 20 : 15)
 			if let imageData {
 				let base64 = imageData.base64EncodedString()
 				let userContent: [[String: Any]] = [
@@ -110,13 +117,15 @@ private enum AIClientLive {
 				raw = try await openaiRequest(
 					systemPrompt: prompt,
 					userContentParts: userContent,
-					apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
+					apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
+					baseURL: endpoint, maxTokens: maxTokens
 				)
 			} else {
 				raw = try await openaiRequest(
 					systemPrompt: prompt,
 					userContent: text,
-					apiKey: apiKey, model: model, timeout: 15, thinkingBudget: thinkingBudget
+					apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
+					baseURL: endpoint, maxTokens: maxTokens
 				)
 			}
 		}
@@ -124,8 +133,13 @@ private enum AIClientLive {
 		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens)
 	}
 
-	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String) async throws -> AIResult {
+	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String, baseURL: String?, maxTokens: Int?) async throws -> AIResult {
 		let start = Date()
+		// Direct-audio mode is gated to Google in the UI; local OpenAI-compatible
+		// servers don't accept audio input, so reject it explicitly here.
+		if baseURL != nil {
+			throw AIError.localAudioUnsupported
+		}
 		let provider = AIProvider.from(model: model)
 		let raw: RawResult
 
@@ -134,6 +148,8 @@ private enum AIClientLive {
 		let imageNote = "(Screenshot of the user's currently active window, provided as visual context for the audio below.)"
 
 		switch provider {
+		case .local:
+			throw AIError.localAudioUnsupported
 		case .gemini:
 			let audioData = try Data(contentsOf: audioURL)
 			let base64Audio = audioData.base64EncodedString()
@@ -162,7 +178,8 @@ private enum AIClientLive {
 			raw = try await openaiRequest(
 				systemPrompt: prompt,
 				userContentParts: userContent,
-				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget
+				apiKey: apiKey, model: model, timeout: 30, thinkingBudget: thinkingBudget,
+				baseURL: openaiCloudBaseURL, maxTokens: nil
 			)
 		}
 
@@ -212,31 +229,39 @@ private enum AIClientLive {
 
 	// MARK: - OpenAI API
 
+	/// Base URL for the OpenAI cloud API (without the `/chat/completions` suffix).
+	static let openaiCloudBaseURL = "https://api.openai.com/v1"
+
 	private static func openaiRequest(
 		systemPrompt: String,
 		userContent: String,
-		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int,
+		baseURL: String, maxTokens: Int?
 	) async throws -> RawResult {
 		return try await openaiRequestInternal(
 			systemPrompt: systemPrompt, userContent: userContent,
-			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
+			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
+			baseURL: baseURL, maxTokens: maxTokens
 		)
 	}
 
 	private static func openaiRequest(
 		systemPrompt: String,
 		userContentParts: [[String: Any]],
-		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int,
+		baseURL: String, maxTokens: Int?
 	) async throws -> RawResult {
 		return try await openaiRequestInternal(
 			systemPrompt: systemPrompt, userContent: userContentParts,
-			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget
+			apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
+			baseURL: baseURL, maxTokens: maxTokens
 		)
 	}
 
 	private static func openaiRequestInternal(
 		systemPrompt: String, userContent: Any,
-		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
+		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int,
+		baseURL: String, maxTokens: Int?
 	) async throws -> RawResult {
 		let reasoningEffort: String = switch thinkingBudget {
 		case 0: "none"
@@ -244,7 +269,7 @@ private enum AIClientLive {
 		case 1025...4096: "medium"
 		default: "high"
 		}
-		let body: [String: Any] = [
+		var body: [String: Any] = [
 			"model": model,
 			"messages": [
 				["role": "developer", "content": systemPrompt],
@@ -252,11 +277,24 @@ private enum AIClientLive {
 			],
 			"reasoning_effort": reasoningEffort
 		]
-		let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+		// Local servers (e.g. LM Studio) need an explicit output cap so reasoning
+		// models don't spend the whole budget thinking and return empty content.
+		if let maxTokens {
+			body["max_tokens"] = maxTokens
+		}
+
+		let trimmedBase = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+		guard let url = URL(string: "\(trimmedBase)/chat/completions") else {
+			throw AIError.invalidBaseURL(baseURL)
+		}
 
 		var request = URLRequest(url: url)
 		request.httpMethod = "POST"
-		request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+		// LM Studio and similar local servers don't require auth; only send the
+		// Authorization header when a key is present.
+		if !apiKey.isEmpty {
+			request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+		}
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 		request.timeoutInterval = timeout
 		request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -267,16 +305,25 @@ private enum AIClientLive {
 		guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
 			  let choices = json["choices"] as? [[String: Any]],
 			  let firstChoice = choices.first,
-			  let message = firstChoice["message"] as? [String: Any],
-			  let resultText = message["content"] as? String
+			  let message = firstChoice["message"] as? [String: Any]
 		else { throw AIError.parsingFailed }
+
+		let resultText = (message["content"] as? String) ?? ""
 
 		// Parse usage: usage.prompt_tokens / completion_tokens
 		let usage = json["usage"] as? [String: Any]
 		let inputTokens = usage?["prompt_tokens"] as? Int
 		let outputTokens = usage?["completion_tokens"] as? Int
 
-		return RawResult(text: resultText.trimmingCharacters(in: .whitespacesAndNewlines), inputTokens: inputTokens, outputTokens: outputTokens)
+		let trimmed = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+		// A reasoning model can hit the token cap before emitting any answer, leaving
+		// content empty. Surface a clear, actionable error in that specific case.
+		// (Other empty responses fall through to the prior behavior of returning "".)
+		if trimmed.isEmpty, (firstChoice["finish_reason"] as? String) == "length" {
+			throw AIError.emptyOutputTruncated
+		}
+
+		return RawResult(text: trimmed, inputTokens: inputTokens, outputTokens: outputTokens)
 	}
 
 	// MARK: - Shared
@@ -299,6 +346,9 @@ enum AIError: LocalizedError {
 	case invalidResponse
 	case apiError(statusCode: Int, message: String)
 	case parsingFailed
+	case invalidBaseURL(String)
+	case localAudioUnsupported
+	case emptyOutputTruncated
 
 	var errorDescription: String? {
 		switch self {
@@ -308,6 +358,12 @@ enum AIError: LocalizedError {
 			return "AI API error (\(statusCode)): \(message)"
 		case .parsingFailed:
 			return "Failed to parse AI API response"
+		case let .invalidBaseURL(url):
+			return "Invalid local LLM base URL: \(url)"
+		case .localAudioUnsupported:
+			return "Direct audio mode isn't supported by local LLMs. Disable it or switch to a Google model."
+		case .emptyOutputTruncated:
+			return "The model hit the output token limit before replying. Increase “Max output tokens” in AI Processing settings."
 		}
 	}
 }

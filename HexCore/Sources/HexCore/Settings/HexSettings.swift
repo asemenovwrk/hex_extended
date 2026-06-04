@@ -60,6 +60,23 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	public var geminiIncludeScreenshot: Bool
 	public var geminiScreenshotMaxDimension: Int
 	public var openaiScreenshotDetail: String
+	/// Active AI provider: "google", "openai", or "local". Stored explicitly rather than
+	/// inferred from the model name, since local model identifiers are arbitrary.
+	public var aiProvider: String
+	public var localLLMBaseURL: String
+	public var localLLMModel: String
+	public var localLLMApiKey: String?
+	public var localLLMMaxTokens: Int
+	/// Screenshot downscale multiplier for local providers (0.1–1.0 of the window's
+	/// native resolution). 1.0 = full resolution. Lower values speed up models with
+	/// dynamic image resolution by sending fewer pixels (and thus fewer vision tokens).
+	public var localLLMScreenshotScale: Double
+	/// When true, a light unsharp mask is applied to the downscaled local screenshot so
+	/// text stays legible at lower resolutions (lets the scale go lower for more speed).
+	public var localLLMSharpenScreenshot: Bool
+	/// Debug: when true, the exact JPEG sent to the AI provider is also written to disk
+	/// (app container → Application Support/DebugScreenshots/last-sent.jpg).
+	public var debugSaveSentScreenshot: Bool
 
 	public var selectedTranscriptionPrompt: TranscriptionPrompt? {
 		guard let id = selectedTranscriptionPromptID else { return nil }
@@ -67,11 +84,30 @@ public struct HexSettings: Codable, Equatable, Sendable {
 	}
 
 	public var activeAIApiKey: String? {
-		let model = geminiModel
-		if model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4") {
+		switch aiProvider {
+		case "openai":
 			return openaiApiKey
+		case "local":
+			return localLLMApiKey
+		default:
+			return geminiApiKey
 		}
-		return geminiApiKey
+	}
+
+	/// True when AI post-processing has everything it needs to make a request.
+	/// Cloud providers require an API key; the local provider requires a base URL
+	/// and model name (an API key is optional for local servers like LM Studio).
+	public var aiPostProcessingConfigured: Bool {
+		if aiProvider == "local" {
+			return !localLLMBaseURL.isEmpty && !localLLMModel.isEmpty
+		}
+		return !(activeAIApiKey ?? "").isEmpty
+	}
+
+	/// Direct-audio mode is only meaningful for Google models; OpenAI and local
+	/// providers go through text post-processing only.
+	public var effectiveDirectAudioMode: Bool {
+		aiProvider == "google" && geminiDirectAudioMode
 	}
 
 	public var selectedGeminiPrompt: TranscriptionPrompt? {
@@ -122,7 +158,15 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		geminiThinkingBudget: Int = 0,
 		geminiIncludeScreenshot: Bool = false,
 		geminiScreenshotMaxDimension: Int = 512,
-		openaiScreenshotDetail: String = "low"
+		openaiScreenshotDetail: String = "low",
+		aiProvider: String = "google",
+		localLLMBaseURL: String = "http://localhost:1234/v1",
+		localLLMModel: String = "",
+		localLLMApiKey: String? = nil,
+		localLLMMaxTokens: Int = 2048,
+		localLLMScreenshotScale: Double = 1.0,
+		localLLMSharpenScreenshot: Bool = false,
+		debugSaveSentScreenshot: Bool = false
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.soundEffectsVolume = soundEffectsVolume
@@ -161,6 +205,14 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		self.geminiIncludeScreenshot = geminiIncludeScreenshot
 		self.geminiScreenshotMaxDimension = geminiScreenshotMaxDimension
 		self.openaiScreenshotDetail = openaiScreenshotDetail
+		self.aiProvider = aiProvider
+		self.localLLMBaseURL = localLLMBaseURL
+		self.localLLMModel = localLLMModel
+		self.localLLMApiKey = localLLMApiKey
+		self.localLLMMaxTokens = localLLMMaxTokens
+		self.localLLMScreenshotScale = localLLMScreenshotScale
+		self.localLLMSharpenScreenshot = localLLMSharpenScreenshot
+		self.debugSaveSentScreenshot = debugSaveSentScreenshot
 		normalizeDoubleTapSettings()
 	}
 
@@ -169,6 +221,13 @@ public struct HexSettings: Codable, Equatable, Sendable {
 		let container = try decoder.container(keyedBy: HexSettingKey.self)
 		for field in HexSettingsSchema.fields {
 			try field.decode(into: &self, from: container)
+		}
+		// Migration: settings saved before the explicit `aiProvider` field derived the
+		// provider from the model name. Preserve that behavior for OpenAI users so their
+		// API key still resolves correctly until they re-pick a model.
+		if !container.contains(.aiProvider) {
+			let model = geminiModel
+			aiProvider = (model.hasPrefix("gpt-") || model.hasPrefix("o3") || model.hasPrefix("o4")) ? "openai" : "google"
 		}
 		normalizeDoubleTapSettings()
 	}
@@ -222,6 +281,14 @@ private enum HexSettingKey: String, CodingKey, CaseIterable {
 	case geminiIncludeScreenshot
 	case geminiScreenshotMaxDimension
 	case openaiScreenshotDetail
+	case aiProvider
+	case localLLMBaseURL
+	case localLLMModel
+	case localLLMApiKey
+	case localLLMMaxTokens
+	case localLLMScreenshotScale
+	case localLLMSharpenScreenshot
+	case debugSaveSentScreenshot
 }
 
 private struct SettingsField<Value: Codable & Sendable> {
@@ -410,6 +477,21 @@ private enum HexSettingsSchema {
 				return allowed.contains(raw) ? raw : defaultValue
 			}
 		).eraseToAny(),
-		SettingsField(.openaiScreenshotDetail, keyPath: \.openaiScreenshotDetail, default: defaults.openaiScreenshotDetail).eraseToAny()
+		SettingsField(.openaiScreenshotDetail, keyPath: \.openaiScreenshotDetail, default: defaults.openaiScreenshotDetail).eraseToAny(),
+		SettingsField(.aiProvider, keyPath: \.aiProvider, default: defaults.aiProvider).eraseToAny(),
+		SettingsField(.localLLMBaseURL, keyPath: \.localLLMBaseURL, default: defaults.localLLMBaseURL).eraseToAny(),
+		SettingsField(.localLLMModel, keyPath: \.localLLMModel, default: defaults.localLLMModel).eraseToAny(),
+		SettingsField(
+			.localLLMApiKey,
+			keyPath: \.localLLMApiKey,
+			default: defaults.localLLMApiKey,
+			encode: { container, key, value in
+				try container.encodeIfPresent(value, forKey: key)
+			}
+		).eraseToAny(),
+		SettingsField(.localLLMMaxTokens, keyPath: \.localLLMMaxTokens, default: defaults.localLLMMaxTokens).eraseToAny(),
+		SettingsField(.localLLMScreenshotScale, keyPath: \.localLLMScreenshotScale, default: defaults.localLLMScreenshotScale).eraseToAny(),
+		SettingsField(.localLLMSharpenScreenshot, keyPath: \.localLLMSharpenScreenshot, default: defaults.localLLMSharpenScreenshot).eraseToAny(),
+		SettingsField(.debugSaveSentScreenshot, keyPath: \.debugSaveSentScreenshot, default: defaults.debugSaveSentScreenshot).eraseToAny()
 	]
 }

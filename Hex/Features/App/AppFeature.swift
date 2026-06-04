@@ -345,7 +345,9 @@ struct AppView: View {
           HStack(spacing: 4) {
             Image(systemName: "sparkles")
               .font(.caption2)
-            let model = store.settings.hexSettings.geminiModel
+            let model = store.settings.hexSettings.aiProvider == "local"
+              ? store.settings.hexSettings.localLLMModel
+              : store.settings.hexSettings.geminiModel
             let tokensText: String = {
               let input = store.transcription.lastAIInputTokens
               let output = store.transcription.lastAIOutputTokens
