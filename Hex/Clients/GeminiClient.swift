@@ -33,6 +33,10 @@ enum AIProvider {
 // MARK: - Client Interface
 
 struct GeminiClient: Sendable {
+	/// Token a user can place inside their post-processing prompt to mark where the
+	/// transcription should be injected. Exposed for the prompt-editor UI hint.
+	static let transcriptionPlaceholder = "{{transcription}}"
+
 	var postProcess: @Sendable (_ text: String, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String, _ baseURL: String?, _ maxTokens: Int?) async throws -> AIResult
 	var transcribeAudio: @Sendable (_ audioURL: URL, _ prompt: String, _ apiKey: String, _ model: String, _ thinkingBudget: Int, _ imageData: Data?, _ openaiDetail: String, _ baseURL: String?, _ maxTokens: Int?) async throws -> AIResult
 
@@ -85,10 +89,21 @@ private enum AIClientLive {
 		let provider: AIProvider = baseURL != nil ? .local : AIProvider.from(model: model)
 		let raw: RawResult
 
-		// The user's prompt is passed verbatim as the system instruction — we don't
-		// modify it. When a screenshot is present, a neutral marker is added to the
-		// user message so the model knows what the image is, without overriding the
-		// user's own instructions.
+		// Two prompt modes:
+		//  - Placeholder mode: the prompt contains `{{transcription}}`. We substitute
+		//    the transcription inline; the combined text is the user message and there
+		//    is no system instruction.
+		//  - Legacy mode: no placeholder. The prompt passes through verbatim as the
+		//    system instruction and the transcription is sent as the user message.
+		let hasPlaceholder = prompt.contains(GeminiClient.transcriptionPlaceholder)
+		let systemPrompt = hasPlaceholder ? "" : prompt
+		let userText = hasPlaceholder
+			? prompt.replacingOccurrences(of: GeminiClient.transcriptionPlaceholder, with: text)
+			: text
+
+		// When a screenshot is present, a neutral marker is added to the user message
+		// so the model knows what the image is, without overriding the user's own
+		// instructions.
 		let imageNote = "(Screenshot of the user's currently active window, provided as visual context for the text below.)"
 
 		switch provider {
@@ -99,9 +114,9 @@ private enum AIClientLive {
 				userParts.append(["inlineData": ["mimeType": "image/jpeg", "data": base64]])
 				userParts.append(["text": imageNote])
 			}
-			userParts.append(["text": text])
+			userParts.append(["text": userText])
 			raw = try await geminiRequest(
-				systemPrompt: prompt,
+				systemPrompt: systemPrompt,
 				userParts: userParts,
 				apiKey: apiKey, model: model, timeout: 20, thinkingBudget: thinkingBudget
 			)
@@ -110,20 +125,24 @@ private enum AIClientLive {
 			let timeout: TimeInterval = provider == .local ? 120 : (imageData != nil ? 20 : 15)
 			if let imageData {
 				let base64 = imageData.base64EncodedString()
+				// Keep the screenshot note and the user text as separate parts so the
+				// user's prompt (which in placeholder mode is the entire instruction)
+				// isn't prefixed/diluted by the note. Mirrors the Gemini branch.
 				let userContent: [[String: Any]] = [
 					["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64)", "detail": openaiDetail]],
-					["type": "text", "text": "\(imageNote)\n\n\(text)"]
+					["type": "text", "text": imageNote],
+					["type": "text", "text": userText]
 				]
 				raw = try await openaiRequest(
-					systemPrompt: prompt,
+					systemPrompt: systemPrompt,
 					userContentParts: userContent,
 					apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
 					baseURL: endpoint, maxTokens: maxTokens
 				)
 			} else {
 				raw = try await openaiRequest(
-					systemPrompt: prompt,
-					userContent: text,
+					systemPrompt: systemPrompt,
+					userContent: userText,
 					apiKey: apiKey, model: model, timeout: timeout, thinkingBudget: thinkingBudget,
 					baseURL: endpoint, maxTokens: maxTokens
 				)
@@ -193,11 +212,15 @@ private enum AIClientLive {
 		userParts: [[String: Any]],
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int
 	) async throws -> RawResult {
-		let body: [String: Any] = [
-			"systemInstruction": ["parts": [["text": systemPrompt]]],
+		var body: [String: Any] = [
 			"contents": [["parts": userParts]],
 			"generationConfig": ["thinkingConfig": ["thinkingBudget": thinkingBudget]]
 		]
+		// Omit systemInstruction in placeholder mode (the whole prompt lives in the
+		// user message); only send it when a separate system instruction exists.
+		if !systemPrompt.isEmpty {
+			body["systemInstruction"] = ["parts": [["text": systemPrompt]]]
+		}
 		let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent")!
 
 		var request = URLRequest(url: url)
@@ -269,12 +292,16 @@ private enum AIClientLive {
 		case 1025...4096: "medium"
 		default: "high"
 		}
+		// Omit the system/developer message in placeholder mode (the whole prompt is
+		// inlined into the user message); only include it when one exists.
+		var messages: [[String: Any]] = []
+		if !systemPrompt.isEmpty {
+			messages.append(["role": "developer", "content": systemPrompt])
+		}
+		messages.append(["role": "user", "content": userContent])
 		var body: [String: Any] = [
 			"model": model,
-			"messages": [
-				["role": "developer", "content": systemPrompt],
-				["role": "user", "content": userContent]
-			],
+			"messages": messages,
 			"reasoning_effort": reasoningEffort
 		]
 		// Local servers (e.g. LM Studio) need an explicit output cap so reasoning

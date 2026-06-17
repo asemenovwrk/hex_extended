@@ -343,6 +343,30 @@ private struct GeminiPromptsManagementView: View {
 				.font(.callout)
 				.foregroundStyle(.secondary)
 
+			// Placeholder hint: explains the optional inline-injection token.
+			VStack(alignment: .leading, spacing: 3) {
+				HStack(spacing: 4) {
+					Image(systemName: "text.insert")
+						.foregroundStyle(.secondary)
+					Text("Insert ")
+						.foregroundStyle(.secondary)
+					+ Text(GeminiClient.transcriptionPlaceholder)
+						.font(.callout.monospaced().bold())
+					+ Text(" where the transcription should go.")
+						.foregroundStyle(.secondary)
+				}
+				.font(.callout)
+				Text("If omitted, the prompt is used as a system instruction and the transcription is sent separately (legacy behavior).")
+					.font(.caption)
+					.foregroundStyle(.tertiary)
+			}
+			.padding(8)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.background(
+				RoundedRectangle(cornerRadius: 6)
+					.fill(Color(NSColor.controlBackgroundColor))
+			)
+
 			if store.hexSettings.geminiPrompts.isEmpty {
 				VStack(spacing: 8) {
 					Spacer()
