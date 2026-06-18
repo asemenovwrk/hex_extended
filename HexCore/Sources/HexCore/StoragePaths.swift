@@ -35,6 +35,16 @@ public extension URL {
 			return modelsDirectory
 		}
 	}
+
+	/// Base directory for downloaded Qwen3-ASR (MLX) models, one subfolder per variant.
+	/// e.g. ~/Library/Application Support/com.kitlangton.Hex/models/qwen3-asr/<variant>
+	static var hexQwenModelsDirectory: URL {
+		get throws {
+			let dir = try hexModelsDirectory.appendingPathComponent("qwen3-asr", isDirectory: true)
+			try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+			return dir
+		}
+	}
 }
 
 public extension FileManager {

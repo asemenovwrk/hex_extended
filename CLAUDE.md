@@ -13,6 +13,14 @@ This is a fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with the f
 
 ### New Features
 
+#### Qwen3-ASR transcription engine (MLX) — third engine
+- On-device Qwen3-ASR via `mlx-swift-asr` (MLX/Metal, runs in-process), alongside WhisperKit (Core ML) and Parakeet (Core ML). Multilingual (RU+EN), strong on mixed-language technical speech.
+- Three curated tiers (`QwenModel`): Low `qwen3-asr-0.6b-8bit-mlx` (~0.96GB), Medium `qwen3-asr-1.7b-8bit-mlx` (~1.8GB), High `qwen3-asr-1.7b-bf16-mlx` (~3.8GB, max quality). Selected via the standard transcription model picker (engine chosen by exact `selectedModel` rawValue match, like Parakeet).
+- The active `TranscriptionPrompt` text is fed into Qwen3-ASR's **context-biasing** input — the model's headline feature for keeping technical terms (e.g. Kubernetes, Docker) in proper form. The same prompt feeds Whisper's `initialPrompt`.
+- Engine + dependency live in **HexCore** (`QwenClient.swift`, `QwenModel.swift`), so the heavy MLX dep is declared once in `HexCore/Package.swift` and the app gets it transitively (no app `.pbxproj` package surgery). MLX deps are pinned (`mlx-swift-asr` revision); its transitive `mlx-swift`/`mlx-swift-lm` are branch-pinned upstream — vendor/pin before release.
+- Models download from `mlx-community` HF repos. Those repos lack `tokenizer.json` (only `vocab.json`+`merges.txt`); HexCore bundles the (shared, identical across sizes) `tokenizer.json` and copies it into each model dir after download. Stored under `…/com.kitlangton.Hex/models/qwen3-asr/<variant>`.
+- See Metal Toolchain build requirement under Build & Install.
+
 #### Whisper Initial Prompts (`TranscriptionPrompt`)
 - Named prompts with terminology hints for Whisper's `initialPrompt` feature
 - Multiple prompts with quick switching via picker in Settings
@@ -50,7 +58,7 @@ This is a fork of [kitlangton/Hex](https://github.com/kitlangton/Hex) with the f
 ```bash
 # 1. Build (ad-hoc signing, no developer certificate needed)
 xcodebuild -scheme Hex -configuration Release -derivedDataPath build \
-  -skipMacroValidation \
+  -skipMacroValidation -skipPackagePluginValidation \
   CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM=""
 
 # 2. Copy the app icon (Xcode 16 .icon format doesn't export via CLI)
@@ -68,6 +76,8 @@ cp -R build/Build/Products/Release/Hex.app /Applications/Hex.app
 ```
 
 **Important notes:**
+- **Metal Toolchain required (for Qwen3-ASR / MLX):** the MLX engine compiles Metal shaders into a `default.metallib`. On Xcode 26+ the Metal compiler is a separate component — install once with `xcodebuild -downloadComponent MetalToolchain` (~688MB), or the build fails with `cannot execute tool 'metal' due to missing Metal Toolchain`. A plain `swift build` of HexCore compiles fine but does NOT produce the metallib (MLX fails at runtime with "Failed to load the default metallib"); the app must be built via `xcodebuild`, which bundles the metallib into `Hex.app`.
+- `-skipPackagePluginValidation` is required because `mlx-swift` ships a `CudaBuild` build-tool plugin that xcodebuild otherwise blocks pending interactive validation.
 - Step 2 is required because `AppIcon.icon` (Xcode 16 format) is not processed correctly by command-line builds. `AppIcon.icns` is extracted from the official release and committed to the repo root.
 - After first install, macOS may ask to grant microphone access again (ad-hoc signature changes the app identity for TCC).
 - The WhisperKit patch in `build/SourcePackages/checkouts/WhisperKit/Sources/WhisperKit/Core/TextDecoder.swift` lives in the SPM checkout and needs to be reapplied after `xcodebuild` resolves packages fresh (e.g., after deleting `build/`). The patch: change `sampleResult.completed` to `(!isPrefill && sampleResult.completed)` at ~line 858.

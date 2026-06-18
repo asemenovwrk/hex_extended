@@ -16,6 +16,30 @@
     "storageSize": "650MB"
   },
   {
+    "displayName": "Qwen3-ASR Low (0.6B)",
+    "internalName": "qwen3-asr-0.6b-8bit-mlx",
+    "size": "Multilingual",
+    "accuracyStars": 4,
+    "speedStars": 5,
+    "storageSize": "960MB"
+  },
+  {
+    "displayName": "Qwen3-ASR Medium (1.7B)",
+    "internalName": "qwen3-asr-1.7b-8bit-mlx",
+    "size": "Multilingual",
+    "accuracyStars": 5,
+    "speedStars": 4,
+    "storageSize": "1.8GB"
+  },
+  {
+    "displayName": "Qwen3-ASR High (1.7B)",
+    "internalName": "qwen3-asr-1.7b-bf16-mlx",
+    "size": "Multilingual",
+    "accuracyStars": 5,
+    "speedStars": 3,
+    "storageSize": "3.8GB"
+  },
+  {
     "displayName": "Whisper Small (Tiny)",
     "internalName": "openai_whisper-tiny",
     "size": "Multilingual",

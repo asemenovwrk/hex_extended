@@ -55,6 +55,14 @@ public struct CuratedModelInfo: Equatable, Identifiable, Codable {
 		parakeetModel != nil
 	}
 
+	var qwenModel: QwenModel? {
+		QwenModel(rawValue: internalName)
+	}
+
+	var isQwen: Bool {
+		qwenModel != nil
+	}
+
 	public init(
 		displayName: String,
 		internalName: String,

@@ -10,13 +10,14 @@ struct CuratedList: View {
 		if store.showAllModels {
 			return Array(store.curatedModels)
 		} else {
-			// Show only Parakeet by default
-			return store.curatedModels.filter { $0.isParakeet }
+			// Show the on-device engines (Parakeet + Qwen3-ASR) by default;
+			// Whisper variants stay behind "Show more".
+			return store.curatedModels.filter { $0.isParakeet || $0.isQwen }
 		}
 	}
 
 	private var hiddenModels: [CuratedModelInfo] {
-		store.curatedModels.filter { !$0.isParakeet }
+		store.curatedModels.filter { !$0.isParakeet && !$0.isQwen }
 	}
 
 	var body: some View {
