@@ -39,16 +39,22 @@ public enum QwenModel: String, CaseIterable, Sendable {
 		}
 	}
 
-	/// Files fetched from the HF repo. `tokenizer.json` is intentionally absent —
-	/// the mlx-community repos ship only `vocab.json`+`merges.txt`, so we inject a
-	/// bundled `tokenizer.json` (identical across all Qwen3-ASR sizes) after download.
-	/// The model weights (`model.safetensors`) are downloaded separately with progress.
-	public static let metadataFileNames: [String] = [
+	/// Metadata files the model loader genuinely needs (download fails if any are
+	/// missing). `tokenizer.json` is intentionally absent — the mlx-community repos
+	/// ship only `vocab.json`+`merges.txt`, so we inject a bundled `tokenizer.json`
+	/// (identical across all Qwen3-ASR sizes) after download.
+	public static let requiredMetadataFileNames: [String] = [
 		"config.json",
-		"generation_config.json",
-		"merges.txt",
 		"vocab.json",
+		"merges.txt",
 		"tokenizer_config.json",
+	]
+
+	/// Best-effort metadata: downloaded if present, skipped on 404 (some repos /
+	/// future variants may omit these — e.g. `index.json` only exists for sharded
+	/// weights).
+	public static let optionalMetadataFileNames: [String] = [
+		"generation_config.json",
 		"preprocessor_config.json",
 		"chat_template.json",
 		"model.safetensors.index.json",

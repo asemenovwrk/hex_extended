@@ -153,12 +153,12 @@ actor TranscriptionClientLive {
   func deleteModel(variant: String) async throws {
     if isParakeet(variant) {
       try await parakeet.deleteCaches(modelName: variant)
-      if currentModelName == variant { unloadCurrentModel() }
+      if currentModelName == variant { await unloadCurrentModel() }
       return
     }
     if isQwen(variant) {
       try await qwen.deleteModel(variant)
-      if currentModelName == variant { unloadCurrentModel() }
+      if currentModelName == variant { await unloadCurrentModel() }
       return
     }
     let modelFolder = modelPath(for: variant)
@@ -171,7 +171,7 @@ actor TranscriptionClientLive {
 
     // If this is the currently loaded model, unload it first
     if currentModelName == variant {
-      unloadCurrentModel()
+      await unloadCurrentModel()
     }
 
     // Delete the model directory
@@ -285,7 +285,7 @@ actor TranscriptionClientLive {
     let model = await resolveVariant(model)
     // Load or switch to the required model if needed.
     if whisperKit == nil || model != currentModelName {
-      unloadCurrentModel()
+      await unloadCurrentModel()
       let startLoad = Date()
       try await downloadAndLoadModel(variant: model) { p in
         // Debug logging, or scale as desired:
@@ -372,9 +372,12 @@ actor TranscriptionClientLive {
   }
 
   // Unloads any currently loaded model (clears `whisperKit` and `currentModelName`).
-  private func unloadCurrentModel() {
+  private func unloadCurrentModel() async {
     whisperKit = nil
     currentModelName = nil
+    // Free any resident Qwen3-ASR model (and its Metal buffers) when switching
+    // engines; no-op if Qwen isn't loaded.
+    await qwen.unload()
   }
 
   /// Downloads the model to a temporary folder (if it isn't already on disk),
