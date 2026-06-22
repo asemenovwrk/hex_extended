@@ -248,18 +248,20 @@ struct GeminiSectionView: View {
 				.pickerStyle(.menu)
 			}
 
-			// Debug: save the exact image sent to the model.
+			// Debug: save the exact image AND the exact prompt sent to the model.
 			Toggle(
-				"Save sent screenshot to disk (debug)",
+				"Save sent screenshot + prompt to disk (debug)",
 				isOn: Binding(
 					get: { store.hexSettings.debugSaveSentScreenshot },
 					set: { store.send(.setDebugSaveSentScreenshot($0)) }
 				)
 			)
+			.help("Writes the last screenshot (last-sent.jpg) and the full prompt sent to the LLM (last-sent-prompt.txt) to a debug folder. Only the most recent call is kept.")
 			if store.hexSettings.debugSaveSentScreenshot {
 				Button("Show in Finder") {
-					if let url = ScreenshotClient.debugScreenshotURL {
-						NSWorkspace.shared.activateFileViewerSelecting([url])
+					let urls = [ScreenshotClient.debugScreenshotURL, ScreenshotClient.debugPromptURL].compactMap { $0 }
+					if !urls.isEmpty {
+						NSWorkspace.shared.activateFileViewerSelecting(urls)
 					}
 				}
 				.buttonStyle(.link)

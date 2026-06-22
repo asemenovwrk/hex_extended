@@ -573,6 +573,9 @@ private extension TranscriptionFeature {
         do {
           let result = try await gemini.postProcess(finalResult, prompt, aiApiKey, aiModel, geminiThinkingBudget, imageData, openaiDetail, aiBaseURL, aiMaxTokens)
           finalResult = result.text
+          if debugSaveScreenshot, let purl = screenshot.saveDebugPrompt(result.requestPreview) {
+            transcriptionFeatureLogger.notice("Sent LLM prompt saved for debug: \(purl.path, privacy: .public)")
+          }
           await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
           transcriptionFeatureLogger.info("AI post-processing applied in \(String(format: "%.2f", result.duration))s\(imageData != nil ? " (with screenshot)" : "")")
         } catch let firstError {
@@ -580,6 +583,9 @@ private extension TranscriptionFeature {
           do {
             let result = try await gemini.postProcess(finalResult, prompt, aiApiKey, aiModel, geminiThinkingBudget, imageData, openaiDetail, aiBaseURL, aiMaxTokens)
             finalResult = result.text
+            if debugSaveScreenshot, let purl = screenshot.saveDebugPrompt(result.requestPreview) {
+              transcriptionFeatureLogger.notice("Sent LLM prompt saved for debug (retry): \(purl.path, privacy: .public)")
+            }
             await send(.geminiTimingUpdated(result.duration, inputTokens: result.inputTokens, outputTokens: result.outputTokens))
             transcriptionFeatureLogger.info("Gemini post-processing applied on retry in \(String(format: "%.2f", result.duration))s")
           } catch {

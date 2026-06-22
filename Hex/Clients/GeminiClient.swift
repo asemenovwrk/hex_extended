@@ -11,6 +11,9 @@ struct AIResult: Sendable {
 	let duration: TimeInterval
 	let inputTokens: Int?
 	let outputTokens: Int?
+	/// Human-readable dump of the exact prompt sent to the model (system + user
+	/// content, after placeholder substitution). Used by the debug-save feature.
+	var requestPreview: String = ""
 }
 
 // MARK: - Provider detection
@@ -106,6 +109,23 @@ private enum AIClientLive {
 		// instructions.
 		let imageNote = "(Screenshot of the user's currently active window, provided as visual context for the text below.)"
 
+		// Faithful, human-readable dump of what is sent — surfaced via AIResult for
+		// the debug-save feature. Mirrors the system/user composition used below.
+		let requestPreview: String = {
+			let userBody = imageData != nil ? "[screenshot image]\n\(imageNote)\n\n\(userText)" : userText
+			let reasoning: String
+			switch provider {
+			case .gemini: reasoning = "thinkingBudget=\(thinkingBudget)"
+			case .openai, .local: reasoning = "reasoning_effort=\(Self.reasoningEffort(for: thinkingBudget))"
+			}
+			var header = "provider: \(provider)\nmodel: \(model)\n"
+			if let baseURL { header += "baseURL: \(baseURL)\n" }
+			if let maxTokens { header += "max_tokens: \(maxTokens)\n" }
+			header += "\(reasoning)\nimage: \(imageData != nil ? "yes (detail=\(openaiDetail))" : "no")\nmode: \(hasPlaceholder ? "placeholder" : "legacy")\n"
+			let systemBlock = systemPrompt.isEmpty ? "----- SYSTEM -----\n(none — prompt inlined into user message)" : "----- SYSTEM -----\n\(systemPrompt)"
+			return "\(header)\n\(systemBlock)\n\n----- USER -----\n\(userBody)\n"
+		}()
+
 		switch provider {
 		case .gemini:
 			var userParts: [[String: Any]] = []
@@ -149,7 +169,18 @@ private enum AIClientLive {
 			}
 		}
 
-		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens)
+		return AIResult(text: raw.text, duration: Date().timeIntervalSince(start), inputTokens: raw.inputTokens, outputTokens: raw.outputTokens, requestPreview: requestPreview)
+	}
+
+	/// Maps our numeric thinking budget to the OpenAI-compatible `reasoning_effort`
+	/// bucket. Single source of truth for both the request and the debug preview.
+	static func reasoningEffort(for thinkingBudget: Int) -> String {
+		switch thinkingBudget {
+		case 0: "none"
+		case 1...1024: "low"
+		case 1025...4096: "medium"
+		default: "high"
+		}
 	}
 
 	static func transcribeAudio(audioURL: URL, prompt: String, apiKey: String, model: String, thinkingBudget: Int, imageData: Data?, openaiDetail: String, baseURL: String?, maxTokens: Int?) async throws -> AIResult {
@@ -286,12 +317,7 @@ private enum AIClientLive {
 		apiKey: String, model: String, timeout: TimeInterval, thinkingBudget: Int,
 		baseURL: String, maxTokens: Int?
 	) async throws -> RawResult {
-		let reasoningEffort: String = switch thinkingBudget {
-		case 0: "none"
-		case 1...1024: "low"
-		case 1025...4096: "medium"
-		default: "high"
-		}
+		let reasoningEffort = AIClientLive.reasoningEffort(for: thinkingBudget)
 		// Omit the system/developer message in placeholder mode (the whole prompt is
 		// inlined into the user message); only include it when one exists.
 		var messages: [[String: Any]] = []

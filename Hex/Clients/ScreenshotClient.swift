@@ -30,16 +30,22 @@ struct ScreenshotClient: Sendable {
 	/// Debug helper: persist the exact JPEG that was sent to the model. Returns the file URL.
 	var saveDebugScreenshot: @Sendable (_ jpeg: Data) -> URL?
 
+	/// Debug helper: persist the exact prompt sent to the post-processing LLM,
+	/// alongside the screenshot. Overwrites the previous one. Returns the file URL.
+	var saveDebugPrompt: @Sendable (_ prompt: String) -> URL?
+
 	init(
 		captureFrontmostWindow: @escaping @Sendable (Int, Double?, Bool) async -> Data? = { _, _, _ in nil },
 		hasPermission: @escaping @Sendable () -> Bool = { false },
 		requestPermission: @escaping @Sendable () -> Void = {},
-		saveDebugScreenshot: @escaping @Sendable (Data) -> URL? = { _ in nil }
+		saveDebugScreenshot: @escaping @Sendable (Data) -> URL? = { _ in nil },
+		saveDebugPrompt: @escaping @Sendable (String) -> URL? = { _ in nil }
 	) {
 		self.captureFrontmostWindow = captureFrontmostWindow
 		self.hasPermission = hasPermission
 		self.requestPermission = requestPermission
 		self.saveDebugScreenshot = saveDebugScreenshot
+		self.saveDebugPrompt = saveDebugPrompt
 	}
 
 	/// Location of the last debug screenshot (used by the "Show in Finder" button).
@@ -48,6 +54,11 @@ struct ScreenshotClient: Sendable {
 			for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false
 		) else { return nil }
 		return base.appendingPathComponent("DebugScreenshots/last-sent.jpg")
+	}
+
+	/// Location of the last debug prompt dump (sibling of the debug screenshot).
+	static var debugPromptURL: URL? {
+		debugScreenshotURL?.deletingLastPathComponent().appendingPathComponent("last-sent-prompt.txt")
 	}
 }
 
@@ -59,7 +70,8 @@ extension ScreenshotClient: DependencyKey {
 			},
 			hasPermission: { CGPreflightScreenCaptureAccess() },
 			requestPermission: { _ = CGRequestScreenCaptureAccess() },
-			saveDebugScreenshot: { jpeg in ScreenshotClientLive.saveDebug(jpeg) }
+			saveDebugScreenshot: { jpeg in ScreenshotClientLive.saveDebug(jpeg) },
+			saveDebugPrompt: { prompt in ScreenshotClientLive.saveDebugPrompt(prompt) }
 		)
 	}
 
@@ -186,6 +198,21 @@ private enum ScreenshotClientLive {
 			return url
 		} catch {
 			screenshotLogger.error("Debug screenshot save failed: \(error.localizedDescription)")
+			return nil
+		}
+	}
+
+	/// Write the exact post-processing prompt to the debug folder. Overwrites the previous one.
+	static func saveDebugPrompt(_ prompt: String) -> URL? {
+		guard let url = ScreenshotClient.debugPromptURL else { return nil }
+		do {
+			try FileManager.default.createDirectory(
+				at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+			)
+			try Data(prompt.utf8).write(to: url, options: .atomic)
+			return url
+		} catch {
+			screenshotLogger.error("Debug prompt save failed: \(error.localizedDescription)")
 			return nil
 		}
 	}
